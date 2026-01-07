@@ -605,20 +605,23 @@ to the opening parenthesis."
 
 (defun f90-ts--align-continued-children (parent)
   "Determine relevant childrens of parent, depending on type of node of parent.
-Depending on context, we might need to drop children of PARENT or use grandparent.
-If parent is an argument_list, then the first child is already relevant.
-For an associate_statement, the first child is keyword 'associate',
-which is not relevant and must be dropped.
-For an association, we need do ascend to the grandparent.
-binding_list and method_list occur in generic and final statements of
-derived type declarations."
+Depending on context, we might need to drop children of PARENT or use grandparent."
   (f90-ts-log :indent "cont-children parent type: %s" (treesit-node-type parent))
+
   (cond
+   ((string= (treesit-node-type parent) "parameters")
+    ;; subroutine or function arguments drop the first child,
+    ;; which is opening parenthesis
+    (when-let ((children (and parent (treesit-node-children parent))))
+      (f90-ts--align-continued-expand-assoc (seq-drop children 1))))
+
    ((string= (treesit-node-type parent) "associate_statement")
+    ;; the first child is keyword 'associate', which should be dropped
     (when-let ((children (and parent (treesit-node-children parent))))
       (f90-ts--align-continued-expand-assoc (seq-drop children 1))))
 
    ((string= (treesit-node-type parent) "association")
+    ;; we need do ascend to the grandparent, and drop first child (what exactly?)
     (when-let* ((gp (and parent (treesit-node-parent parent)))
                 (children (treesit-node-children gp)))
       (f90-ts--align-continued-expand-assoc (seq-drop children 1))))
@@ -628,13 +631,8 @@ derived type declarations."
       ;; drop the (binding_name ...) part, and the => binding symbol
       (f90-ts--align-continued-expand-assoc (seq-drop children 2))))
 
-   ;;((string= (treesit-node-type parent) "method_list")
-   ;; (when-let ((children (and parent (treesit-node-children parent))))
-   ;;   ;; nothing to drop, take all children
-   ;;   (f90-ts--align-continued-expand-assoc children)))
-
    (t
-    ;; expand for logical expression?? but how
+    ;; for cases where nothing needs to be dropped (or just unidentified yet)
     (when-let ((children (and parent (treesit-node-children parent))))
       children))))
 
@@ -822,6 +820,8 @@ with !$ or !$omp")
     ,@(f90-ts-indent-rules-info "lists")
     ((parent-is   "argument_list")                 column-0 f90-ts--align-continued-arg-offset)
     ((parent-is   "association_list")              column-0 f90-ts--align-continued-arg-offset)
+    ((n-p-ps nil  "parameters" "subroutine")       column-0 f90-ts--align-continued-arg-offset) ;; arguments of subroutine
+    ((n-p-ps nil  "parameters" "function")         column-0 f90-ts--align-continued-arg-offset) ;; arguments of function
     ((n-p-ps nil  "parenthesized_expression" "do") column-0 f90-ts--align-continued-arg-offset) ;; within logical while expression
     ((n-p-ps nil  "logical_expression"       "do") column-0 f90-ts--align-continued-arg-offset) ;; within logical while expression
     ((n-p-ps nil  "parenthesized_expression" "if") column-0 f90-ts--align-continued-arg-offset) ;; within logical if expression
