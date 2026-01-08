@@ -123,13 +123,53 @@ jumping and nil turns of smart end completion."
 
 
 ;;------------------------------------------------------------------------------
+;; keymap and syntax table
 
-;; Keymap for f90-ts-mode
 (defvar f90-ts-mode-map
   (let ((map (make-sparse-keymap)))
     ;; (define-key map (kbd "A-h m") #'f90-ts-some-function)
     map)
   "Keymap for `f90-ts-mode'.")
+
+
+(defvar f90-ts-mode-syntax-table
+  (let ((table (make-syntax-table)))
+    ;; --- symbols and words ---
+    ;; '_' is a symbol constituent in Fortran
+    (modify-syntax-entry ?_ "_" table)
+
+    ;; --- string delimiters ---
+    (modify-syntax-entry ?\" "\"" table)
+    (modify-syntax-entry ?\' "\"" table)
+
+    ;; --- comments ---
+    ;; '!' starts a comment. '<' means start, 'b' means it's a
+    ;; "Style B" comment (standard for line-based comments).
+    (modify-syntax-entry ?! "< b" table)
+    ;; newline ends the comment. '>' means end.
+    (modify-syntax-entry ?\n "> b" table)
+
+    ;; delimiters, newline, continuation
+    (modify-syntax-entry ?\r " "  table) ; return is whitespace
+    (modify-syntax-entry ?&  "."  table) ; continuation line
+    (modify-syntax-entry ?%  "."  table) ; component reference
+
+    ;; --- Arithmetic/Logic Punctuation ---
+    (modify-syntax-entry ?+ "." table)
+    (modify-syntax-entry ?- "." table)
+    (modify-syntax-entry ?* "." table)
+    (modify-syntax-entry ?/ "." table)
+    (modify-syntax-entry ?= "." table)
+    (modify-syntax-entry ?< "." table)
+    (modify-syntax-entry ?> "." table)
+    (modify-syntax-entry ?. "." table)  ; this is difficult, as dot in ".and." for example
+                                        ; should belong to the symbol class and not punctuation,
+                                        ; but having this as symbol would interfer with for example
+                                        ; "my_flag.and.other_flag", appearing as one big symbol,
+                                        ; likewise it could be difficult with floating point numbers?
+
+    table)
+  "Syntax table for `f90-ts-mode'.")
 
 
 ;;------------------------------------------------------------------------------
