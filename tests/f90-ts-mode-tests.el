@@ -11,6 +11,7 @@
 
 
 (ert-deftest f90-ts-mode-test-activates ()
+  "Check whether f90-ts-mode properly starts."
   (with-temp-buffer
     (insert "program activation\nend program activation\n")
     (f90-ts-mode)
@@ -46,7 +47,7 @@ Return nil if test passes, otherwise the test category (indentation, font-lock e
       (let ((compare (with-temp-buffer
                        (insert-file-contents compare-file)
                        (read (current-buffer))))
-            (current   (f90-ts-mode-tests--with-test-indent
+            (current   (f90-ts-mode-tests--run-with-testing
                         file
                         (lambda ()
                           (indent-region (point-min) (point-max))
@@ -68,7 +69,7 @@ Return nil if test passes, otherwise the test category (indentation, font-lock e
 
 (defun f90-ts-mode-tests--compare-file (f90-file)
   "Get the compare-with file name for an F90-FILE."
-  (concat (file-name-sans-extension f90-file) ".compare"))
+  (file-name-with-extension f90-file ".cmp"))
 
 
 (defun f90-ts-mode-tests--faces ()
@@ -135,9 +136,9 @@ Return nil if test passes, otherwise the test category (indentation, font-lock e
       )))
 
 
-(defun f90-ts-mode-tests--save-compare (file)
+(defun f90-ts-mode-tests--update-compare (file)
   "Generate and save compare file for FILE."
-  (f90-ts-mode-tests--with-test-indent
+  (f90-ts-mode-tests--run-with-testing
    file
    (lambda ()
      (font-lock-ensure)
@@ -148,11 +149,11 @@ Return nil if test passes, otherwise the test category (indentation, font-lock e
        (message "saved compare file for %s" (file-name-nondirectory file))))))
 
 
-(defun f90-ts-mode-tests-generate-compare ()
+(defun f90-ts-mode-tests-update ()
   "Generate compare files for all resource files."
   (interactive)
   (dolist (file (directory-files (f90-ts-mode-tests--resources-dir) t "\\.f90\\'"))
-    (f90-ts-mode-tests--save-compare file)))
+    (f90-ts-mode-tests--update-compare file)))
 
 
 ;;------------------------------------------------------------------------------
@@ -194,8 +195,8 @@ If failure, then return the label which failed, otherwise nil."
          (current-val (plist-get current key))
          (label (substring (symbol-name key) 1)) ; remove leading ":" of key
          (cmp (equal compare-val current-val)))
-    (message "cmp %s" compare-val)
-    (message "cur %s" current-val)
+    ;;(message "cmp %s" compare-val)
+    ;;(message "cur %s" current-val)
     (unless cmp
       (when diff (f90-ts-mode-tests--show-diff file compare-val current-val label diff)))
     ;; return label in case of an failure
@@ -213,13 +214,71 @@ If failure, then return the label which failed, otherwise nil."
     (expand-file-name "resources" test-dir)))
 
 
-(defun f90-ts-mode-tests--with-test-indent (file body-fn)
-  "Run BODY-FN on FILE with test indentation values. Use different values for each
-indentation type, so that selection of indentation rules is tested properly."
-  (let ((f90-ts-indent-toplevel 1)
-        (f90-ts-indent-contain 3)
-        (f90-ts-indent-block 5)
-        (f90-ts-indent-continued 7))
+;;------------------------------------------------------------------------------
+;; custom variable handling for testing
+
+(defconst f90-ts-mode-tests-managed-custom
+  '(f90-ts-indent-toplevel
+    f90-ts-indent-contain
+    f90-ts-indent-block
+    f90-ts-indent-continued
+    f90-ts-special-comment-regexp)
+  "Custom variables whose values can be temporarily overridden.")
+
+
+(defvar f90-ts-mode-tests-saved-custom-values
+  '()
+  "Alist of saved custom variable values for temporary overrides.")
+
+
+(defun f90-ts-mode-tests-save-custom ()
+  "Save current custom values of `f90-ts-mode-tests-managed-custom`."
+  (setq f90-ts-mode-tests-saved-custom-values
+        (mapcar (lambda (var)
+                  (cons var (symbol-value var)))
+                f90-ts-mode-tests-managed-custom)))
+
+
+(defconst f90-ts-mode-tests-custom-testing
+  '((f90-ts-indent-toplevel . 1)
+    (f90-ts-indent-contain . 3)
+    (f90-ts-indent-block . 5)
+    (f90-ts-indent-continued . 7)
+    (f90-ts-special-comment-regexp . "! \\(result\\|=\\{10\\}\\|arguments\\|local\\)$")
+    )
+  "Alist of custom variable values for testing purposes.")
+
+
+(defun f90-ts-mode-tests-set-custom-testing ()
+  "Save current values and apply temporary ones for testing purposes."
+  (f90-ts-mode-tests-save-custom)
+  (dolist (entry f90-ts-mode-tests-custom-testing)
+    (set (car entry) (cdr entry))))
+
+
+(defun f90-ts-mode-tests-restore-custom ()
+  "Restore previously saved custom variable values."
+  (unless f90-ts-mode-tests-saved-custom-values
+    (error "f90-ts-mode-tests: No saved custom variable state to restore"))
+  (dolist (entry f90-ts-mode-tests-saved-custom-values)
+    (set (car entry) (cdr entry)))
+  (setq f90-ts-mode-tests-saved-custom-values nil))
+
+
+(defmacro f90-ts-mode-tests-with-custom-testing (&rest body)
+  `(let ((f90-ts-mode-tests-saved-custom-values nil))
+     (unwind-protect
+         (progn
+           (f90-ts-mode-tests-set-custom-testing)
+           ,@body)
+       (f90-ts-mode-tests-restore-custom))))
+
+
+(defun f90-ts-mode-tests--run-with-testing (file body-fn)
+  "Run BODY-FN on FILE with custom values for testing. For example, use
+different indentation values for each indentation type, so that
+selection of indentation rules is tested properly."
+  (f90-ts-mode-tests-with-custom-testing
     (with-temp-buffer
       (insert-file-contents file)
       (f90-ts-mode)
