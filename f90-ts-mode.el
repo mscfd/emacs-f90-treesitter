@@ -692,11 +692,13 @@ to the opening parenthesis."
 
 
 (defun f90-ts--align-continued-expand-assoc (nodes)
-  "Replace association nodes in list NODES by their children."
+  "Replace association nodes in list NODES by their first two children,
+which are field 'name' and '=>'. There is no handling of the selector
+part currently."
   (seq-mapcat
    (lambda (node)
      (if (string= "association" (treesit-node-type node))
-         (treesit-node-children node)
+         (seq-take (treesit-node-children node) 2)
        (list node)))
    nodes))
 
@@ -717,6 +719,14 @@ Depending on context, we might need to drop children of PARENT or use grandparen
     ;; expand it, as the it contains a list of nodes, whose children are required
     (when-let ((children (and parent (treesit-node-children parent))))
       (f90-ts--align-continued-expand-assoc children)))
+
+   ((string= (treesit-node-type parent) "association")
+    ;; one step up, then this is association_list, this happens on a continued line:
+    ;; (name &
+    ;;   => selector)
+    (when-let* ((grandparent (treesit-node-parent parent))
+                (aunts-uncles (treesit-node-children grandparent)))
+      (f90-ts--align-continued-expand-assoc aunts-uncles)))
 
    ((or (string= (treesit-node-type parent) "binding_list")
         (string= (treesit-node-type parent) "final_statement"))
@@ -988,6 +998,7 @@ For example: argument lists, association lists, (logical) expressions with align
     ,@(f90-ts-indent-rules-info "internal_proc")
     ((node-is "internal_procedures") parent 0)
     ((parent-is "internal_procedures") parent f90-ts--indent-toplevel-offset)
+    ((n-p-gp nil "ERROR" "internal_procedures") parent f90-ts--indent-toplevel-offset)
     )
   "Indentation rules for internal_proc node, which occurs in conjunction with contain statements.")
 
