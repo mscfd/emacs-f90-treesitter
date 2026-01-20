@@ -113,6 +113,13 @@ jumping and nil turns of smart end completion."
   :group 'f90-ts)
 
 
+(defface f90-ts-font-lock-special-var-face
+  '((t :foreground "blue4"
+       :weight semi-bold))
+  "Face for special variables like self or this."
+  :group 'f90-ts)
+
+
 (defface f90-ts-font-lock-special-comment-face
   '((t :foreground "Sienna4"
        :weight bold))
@@ -463,6 +470,17 @@ associates and others."
      )))
 
 
+(defun f90-ts--font-lock-rules-variable ()
+  "Font-lock rules for variables."
+  (treesit-font-lock-rules
+   :language 'fortran
+   :feature 'variable
+   '(
+     ((identifier) @f90-ts-font-lock-special-var-face
+      (:pred f90-ts-special-var-p @f90-ts-font-lock-special-var-face))
+   )))
+
+
 (defun f90-ts--font-lock-rules-value ()
   "Font-lock rules for numbers, strings, booleans etc."
   (treesit-font-lock-rules
@@ -521,6 +539,7 @@ associates and others."
    (f90-ts--font-lock-rules-interface)
    (f90-ts--font-lock-rules-end)
    (f90-ts--font-lock-rules-operator)
+   (f90-ts--font-lock-rules-variable)
    (f90-ts--font-lock-rules-value)
    (f90-ts--font-lock-rules-delimiter))
   "List of font-lock rules.")
@@ -1456,6 +1475,14 @@ and `f90-comment-region-prefix`."
 ;;------------------------------------------------------------------------------
 ;; auxiliary
 
+(defcustom f90-ts-special-var-regexp "\\_<\\(self\\|this\\)\\_>"
+  "Regular expression for matching names of special variables like
+self or this. Used for applying a special font lock face."
+  :type 'regexp
+  :safe #'stringp
+  :group 'f90-ts)
+
+
 (defcustom f90-ts-comment-prefix-regexp "!\\(?:!*\\|[<>]\\)\\s-*"
   "Regular expression for matching and capturing comment starts (excluding openmp).
 For example \"![<>]?\" optionally adds symbols < and > used by documentation tools.
@@ -1463,7 +1490,7 @@ Also add trailing whitespace characters to preserve indentation within comments.
 This is used for applying the same comment starter in comment section, see
 `f90-ts-break-line`."
   :type 'regexp
-  :safe #'stringp  ; allows setting via file-local variables if it's a string
+  :safe #'stringp
   :group 'f90-ts)
 
 
@@ -1472,7 +1499,7 @@ This is used for applying the same comment starter in comment section, see
 For example \"![<>]?\" optionally adds symbols < and > used by documentation tools.
 Also add trailing whitespace characters to preserve indentation within comments."
   :type 'regexp
-  :safe #'stringp  ; allows setting via file-local variables if it's a string
+  :safe #'stringp
   :group 'f90-ts)
 
 
@@ -1480,7 +1507,7 @@ Also add trailing whitespace characters to preserve indentation within comments.
   "Regular expression for matching special comments (e.g. for structuring code).
 Used for applying a special font lock face."
   :type 'regexp
-  :safe #'stringp  ; allows setting via file-local variables if it's a string
+  :safe #'stringp
   :group 'f90-ts)
 
 
@@ -1493,6 +1520,16 @@ Include any special symbol characters "
     (when (string-match rx-comment (treesit-node-text node))
       (f90-ts-log :auxiliary "matched comment prefix: <%s>" (match-string 0 (treesit-node-text node)))
       (match-string 0 (treesit-node-text node)))))
+
+
+(defun f90-ts-special-var-p (node)
+  "Check if NODE is an identifier and matches the special variable regexp.
+Note that the parse uses identifier not just for variables, but for types etc."
+  (when (string= (treesit-node-type node) "identifier")
+    ;; we do not prepend or append symbol start or end assertions, as it should also
+    ;; work with more general regexps (like highlight all variables with a certain prefix)
+    ;;(string-match f90-ts-special-var-regexp (treesit-node-text node))))
+    (string-match "self" (treesit-node-text node))))
 
 
 (defun f90-ts-openmp-node-p (node)
