@@ -468,27 +468,18 @@ associates and others."
   (treesit-font-lock-rules
    :language 'fortran
    :feature 'string
-   '((string_literal) @font-lock-string-face)
-   
-   :language 'fortran
-   :feature 'string
-   '((preproc_include path: (string_literal) @font-lock-string-face))
+   '(((string_literal) @font-lock-string-face)
+     (preproc_include path: (string_literal) @font-lock-string-face))
 
    :language 'fortran
    :feature 'number
-   '((number_literal) @font-lock-number-face)
-
-   :language 'fortran
-   :feature 'number
-   '((complex_literal) @font-lock-number-face)
+   '(((number_literal) @font-lock-number-face)
+     ((complex_literal) @font-lock-number-face))
    
    :language 'fortran
    :feature 'constant
-   '((boolean_literal) @font-lock-constant-face)
-
-   :language 'fortran
-   :feature 'constant
-   '((null_literal) @font-lock-constant-face)
+   '(((boolean_literal) @font-lock-constant-face)
+     ((null_literal) @font-lock-constant-face))
    ))
 
 
