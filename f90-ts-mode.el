@@ -712,6 +712,18 @@ part currently."
    nodes))
 
 
+(defun f90-ts--align-continued-expand-logical-expression (node)
+  "Return relevant children of a nested logical expression tree.
+An expression like A .and. B .and. C is roughly represented as
+logical_expression(logical_expression(A .and. B), .and. C).
+The routine returns the five children A, .and., B, and., C.
+It does not descend into parenthesized_expressions."
+  (if (string= (treesit-node-type node) "logical_expression")
+      (mapcan #'f90-ts--align-continued-expand-logical-expression
+              (treesit-node-children node))
+    (list node)))
+
+
 (defun f90-ts--align-continued-children (parent)
   "Determine relevant childrens of parent, depending on type of node of parent.
 Depending on context, we might need to drop children of PARENT or use grandparent."
@@ -721,12 +733,12 @@ Depending on context, we might need to drop children of PARENT or use grandparen
    ((string= (treesit-node-type parent) "parameters")
     ;; subroutine or function arguments drop the first child,
     ;; which is opening parenthesis
-    (when-let ((children (and parent (treesit-node-children parent))))
+    (when-let ((children (treesit-node-children parent)))
       (seq-drop children 1)))
 
    ((string= (treesit-node-type parent) "association_list")
     ;; expand it, as the it contains a list of nodes, whose children are required
-    (when-let ((children (and parent (treesit-node-children parent))))
+    (when-let ((children (treesit-node-children parent)))
       (f90-ts--align-continued-expand-assoc children)))
 
    ((string= (treesit-node-type parent) "association")
@@ -739,17 +751,34 @@ Depending on context, we might need to drop children of PARENT or use grandparen
 
    ((or (string= (treesit-node-type parent) "binding_list")
         (string= (treesit-node-type parent) "final_statement"))
-    (when-let ((children (and parent (treesit-node-children parent))))
+    (when-let ((children (treesit-node-children parent)))
       ;; drop the (binding_name ...) part, and the => binding symbol
       (seq-drop children 2)))
 
    ((string= (treesit-node-type parent) "variable_declaration")
-    (when-let ((children (and parent (treesit-node-children parent))))
+    (when-let ((children (treesit-node-children parent)))
       ;; drop everything before the first declarator field (first declared variable)
       (seq-drop-while
        (lambda (child)
          (not (string= "declarator" (treesit-node-field-name child))))
        children)))
+
+   ((string= (treesit-node-type parent) "logical_expression")
+    ;; expand logical expression
+    ;; example not yet handled: do while (cond1 .and. cond2 &
+    ;;                                          .and. cond3)
+    ;; here: (cond1 .and. cond2) are implicitly parenthesised
+    ;; solution walk up to find root node of logical_expression type,
+    ;; then expand logical_expression (but not parenthesised_expression) recursively
+    (when-let ((root (cl-loop
+                      for current = parent then next
+                      for next = (treesit-node-parent current)
+                      while (string= "logical_expression" (treesit-node-type next))
+                      finally return current)))
+      (f90-ts-inspect-node :indent root "root")
+      (let ((children (f90-ts--align-continued-expand-logical-expression root)))
+        (f90-ts-log :indent "cont-logexpr: %s" children)
+        children)))
 
    (t
     ;; for cases where nothing needs to be dropped (or just unidentified yet)
