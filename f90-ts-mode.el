@@ -1479,16 +1479,53 @@ Currently it handles end statements."
 
 
 ;;------------------------------------------------------------------------------
-;; Break lines and add continuation symbol
+;; Indentation and smart end completion
 
 (defun f90-ts--indent-and-complete ()
   (interactive)
   (f90-ts-log :indent "INDENT ============================")
   (treesit-indent)
+  (f90-ts-log :complete "DONE ==========================")
   (f90-ts-log :complete "COMPLETE ==========================")
   (f90-ts--complete-smart-tab)
+  (f90-ts-log :complete "DONE ==========================")
   )
 
+
+(defun f90-ts-complete-smart-end-region (start end)
+  "Execute smart end completion in region, using treesitter nodes
+representing end constructs."
+  (interactive
+   (if (use-region-p)
+       (list (region-beginning) (region-end))
+     (list (point-min) (point-max))))
+  (let* ((root (treesit-buffer-root-node))
+         (end-stmts (f90-ts--search-subtree
+                     root
+                     (lambda (n) (member (treesit-node-type n) f90-ts--complete-end-structs))
+                     start end
+                     t t)))
+    ;; process in reverse order (from last to first, search-subtree returns
+    ;; in reversed order (due to last argument t), this way node positions do
+    ;; not become stale after completion of end statements
+    (cl-loop
+     for node in end-stmts
+     do (f90-ts--complete-smart-end-node node)
+     )))
+
+(defun f90-ts-indent-and-complete-region (start end)
+  "Indent region and execute smart end completion in specified region,
+based on the treesitter tree overlapping that region."
+  (interactive
+   (if (use-region-p)
+       (list (region-beginning) (region-end))
+     (list (point-min) (point-max))))
+  (treesit-indent-region start end)
+  (f90-ts-complete-smart-end-region start end))
+
+
+;;------------------------------------------------------------------------------
+;; Break lines and add continuation symbol
 
 (defun f90-ts--break-line-insert-amp-at-end ()
   "If not yet present, insert ampersand at end of line."
