@@ -1294,16 +1294,43 @@ For example: argument lists, association lists, (logical) expressions with align
 
 
 ;;------------------------------------------------------------------------------
-;; Completion functions
+;; Smart end completion
 
-(defun f90-ts--complete-replace-if-changed (beg end completion)
-  "Replace text in region BEG...END with COMPLETION, but only if different."
-  (let ((original (buffer-substring-no-properties beg end)))
+(defconst f90-ts--complete-end-structs
+  '("end_program_statement"
+    "end_module_statement"
+    "end_submodule_statement"
+    ;"end_block_data_statement"
+    "end_subroutine_statement"
+    "end_function_statement"
+    ;"end_module_procedure_statement"
+    "end_type_statement"
+    "end_interface_statement"
+    ;"end_do_label_loop_statement"
+    "end_do_loop_statement"
+    "end_if_statement"
+    ;"end_where_statement"
+    ;"end_forall_statement"
+    "end_select_statement"
+    "end_block_construct_statement"
+    "end_associate_statement"
+    ;"end_enum_statement"
+    ;"end_enumeration_statement"
+    ;"end_coarray_team_statement"
+    ;"end_coarray_critical_statement"
+    )
+    "List of type name used to represent end struct statements for
+smart end completion. Statements not yet supported are commented out.")
+
+
+(defun f90-ts--complete-replace-if-changed (start end completion)
+  "Replace text in region START...END with COMPLETION, but only if different."
+  (let ((original (buffer-substring-no-properties start end)))
     (if (string= original completion)
         (goto-char end)
       (progn
-        (delete-region beg end)
-        (goto-char beg)
+        (delete-region start end)
+        (goto-char start)
         (insert completion)
         ))))
 
@@ -1349,7 +1376,7 @@ CONSTRUCT-TYPE is a string like 'subroutine', 'function', 'module', etc."
       ("derived_type_definition" (f90-ts--complete-smart-end-compose node "type"))
       ("interface"               (f90-ts--complete-smart-end-compose node "interface"))
 
-      ;; simple completion, no label or name extraction so far
+      ;; TODO: just simple completion, no label or name extraction so far
       ("if_statement"            "end if")
       ("do_loop"                 "end do")
       ("associate_statement"     "end associate")
@@ -1362,94 +1389,70 @@ CONSTRUCT-TYPE is a string like 'subroutine', 'function', 'module', etc."
       )))
 
 
-(defun f90-ts--complete-smart-end-node (node)
-  "Determine whether NODE represents an opening statement or an ERROR statement
-next to an opening statement. For incomplete blocks (where 'end' alone is not
-sufficient) the error case needs to be handled carefully."
-  (let* ((type-node (treesit-node-type node))
-         (prevsib (and (string= type-node "ERROR")
-                       (treesit-node-prev-sibling node)))
-         (prevfirst (and prevsib (f90-ts--first-node-of-stmt prevsib)))
-         (node-check (if (string= type-node "ERROR")
-                         prevfirst
-                       node))
-         (completion (f90-ts--complete-smart-end-map node-check)))
-    (f90-ts-inspect-node :complete node-check "check")
-    (f90-ts-inspect-node :complete node "se-node")
-    (f90-ts-inspect-node :complete prevsib "se-prevsib")
-    (f90-ts-inspect-node :complete prevfirst "se-prevfirst")
-
-    (when completion
-      (list node-check completion))
+(defun f90-ts--complete-smart-end-show (node-stmt)
+  "Show the completion either by jumping to it or printing into the
+message buffer, depending on position and whether 'blink is set."
+  (let ((top-of-window (window-start))
+        (start-block (treesit-node-start node-stmt)))
+    (save-excursion
+      (goto-char start-block)
+      (if (or (eq f90-ts-smart-end 'no-blink)
+              (< start-block top-of-window))
+          (message "matches %s: %s"
+                   (what-line)
+                   (buffer-substring
+                    (line-beginning-position)
+                    (line-end-position)))
+        (sit-for blink-matching-delay)))
     ))
 
 
-(defun f90-ts--complete-smart-end-stmt (node)
-  "Generate appropriate 'end' statement completion based on NODE context.
-Returns the opening node and a string like 'end subroutine foo' or 'end module bar'."
-  (let (;; current is "end" unnamed leaf node, we can always start with the parent
-        (current (treesit-node-parent node))
-        (max-depth 20)
-        (depth 0)
-        (completion nil))
-    (f90-ts-log :complete "start while: node type=%s, current type=%s" (treesit-node-type node) (treesit-node-type current))
-    ;; Walk up the tree to find a construct that needs an end statement
-    (while (and current (< depth max-depth) (not completion))
-      (progn
-        (f90-ts-log :complete "----")
-        ;;(let ((name-node (treesit-node-child-by-field-name node "name")))
-        ;;  (when name-node
-        ;;    (f90-ts-log :complete "loop while: node name= %s" (treesit-node-text name-node t))))
-        (f90-ts-log :complete "loop while: depth=%d, type=%s, type-parent=%s"
-                 depth
-                 (treesit-node-type current)
-                 (treesit-node-type (treesit-node-parent current)))
-
-        (let ((node-compl (f90-ts--complete-smart-end-node current)))
-          (f90-ts-log :complete "by node: depth=%d, compl-by-node=%s" depth node-compl)
-          (if node-compl
-              (setq completion node-compl)
-            (setq current (treesit-node-parent current)
-                  depth (1+ depth))))))
-    ;; this is (list node completion)
-    completion))
+(defun f90-ts--complete-smart-end-region (node)
+  "Find the end character to be replaced by end completion for node.
+We want to remove trailing white space characters, but keep comments
+or commands following an semicolon `;`. Moreover, incompletely typed
+text like in `end subr_out` with point at `_` should be handled as well."
+  (save-excursion
+    (goto-char (treesit-node-end node))
+    (skip-chars-forward "^;!\n")
+    (let ((c (char-after)))
+      (unless (or (eq c ?\n)
+                  (null c))
+        ;; this finally trims trailing white spaces if nothing else
+        ;; is on the line
+        (skip-chars-backward " \t")))
+    (point)))
 
 
-(defun f90-ts--complete-smart-end (node)
-  "Check whether point is at an 'end' statement and try find completion
-for it like type of construct and name."
-  (let ((node-text (treesit-node-text node t)))
-    (f90-ts-log :complete "smart end: text = %s" node-text)
-    ;; Check if current node or its text starts with "end"
-    (when (and node-text (string-match-p "^end" node-text))
-      (when-let* ((node-compl (f90-ts--complete-smart-end-stmt node))
-                  (node-block (nth 0 node-compl))
-                  (completion (nth 1 node-compl)))
-        (let* ((top-of-window (window-start))
-               (start-block (treesit-node-start node-block))
-               (start-node (treesit-node-start node))
-               (end-node   (line-end-position))
-               (result (list start-node (1- end-node) (list completion))))
-          (f90-ts-log :complete "----")
-          (f90-ts-log :complete "start: %s" (treesit-node-start node-block))
-          (f90-ts-log :complete "node: text=%s start=%d, end=%d" node-text start-node end-node)
-          (f90-ts-log :complete "result: %s" result)
+(defun f90-ts--complete-smart-end-node (node &optional fshow)
+  "Check whether NODE represents an end struct statement and try find
+a completion for it like structure type and name.
+Example: compelete `end` closing a subroutine block by `end subroutine mysub`"
+  ;; the region check ensures that end statements on continued lines are left alone
+  (let ((type (treesit-node-type node))
+        (start (treesit-node-start node))
+        (end (f90-ts--complete-smart-end-region node))
+        (text (treesit-node-text node)))
+    ;; make sure that we are looking at and end statement, the parser might add
+    ;; and end_xyz_statement node in error recovery mode (e.g. at end of file)
+    (when (and (= (line-number-at-pos start) (line-number-at-pos end))
+               (and text (string-match-p "^end" text))
+               (member type f90-ts--complete-end-structs))
+      (f90-ts-log :complete "smart end: text = %s, type = %s" (treesit-node-text node t) type)
+      (f90-ts-log :complete "smart end: start = %s, end = %d" start end)
+      (when-let* ((node-stmt (treesit-node-parent node))
+                  (completion (f90-ts--complete-smart-end-map node-stmt)))
+          (f90-ts-log :complete "smart end: node type=%s, stmt type=%s" (treesit-node-type node) (treesit-node-type node-stmt))
+          (f90-ts-log :complete "smart end: node start=%s, end=%s" node-stmt node)
           (f90-ts-log :complete "completion string: %S" completion)
-          (f90-ts-log :complete "point: %d, %d" start-block top-of-window)
 
-          (f90-ts--complete-replace-if-changed start-node end-node completion)
+          (f90-ts--complete-replace-if-changed start end completion)
 
-          (when (eq f90-ts-smart-end 'blink)
-              (if (< start-block top-of-window)
-                  (message "matches %s: %s"
-                           (what-line)
-                           (buffer-substring
-                            (line-beginning-position)
-                            (line-end-position)))
-                (save-excursion
-                  (goto-char start-block)
-                  (sit-for blink-matching-delay))))
-          )))))
+          (when fshow
+            ;; show the completion, do this even if nothing has been changed,
+            ;; as this is useful to shortly show the start of the block
+            (funcall fshow node-stmt))
+          ))))
 
 
 ;; The idea for smart end completion is taken from the classic f90-mode.
@@ -1458,19 +1461,21 @@ for it like type of construct and name."
 Currently it handles end statements."
   (when f90-ts-smart-end
     (f90-ts-log :complete "smart tab point: %d" (point))
-    (let* ((start-line (line-beginning-position))
-           (end-line (line-end-position))
-           (node (f90-ts--first-node-on-line (point))))
-      (f90-ts-log :complete "node: %s" node)
-      (when (and node
-                 (>= (treesit-node-start node) start-line)
-                 (<= (treesit-node-start node) end-line))
-        (f90-ts-log :complete "complete at node: type=%s, text=%s, start=%d, end=%d"
-                    (treesit-node-type node)
-                    (treesit-node-text node)
-                    (treesit-node-start node)
-                    (treesit-node-end node))
-        (f90-ts--complete-smart-end node)))))
+    (when-let* ((node-indent (f90-ts--node-at-indent-pos (point)))
+                (start (treesit-node-start node-indent))
+                (node (treesit-parent-while
+                       node-indent
+                       (lambda (n) (= start (treesit-node-start n)))))
+                (end (treesit-node-end node)))
+      (f90-ts-log :complete "node-indent: %s" node-indent)
+      (f90-ts-log :complete "complete at node: type=%s, start=%d, end=%d"
+                  (treesit-node-type node)
+                  (treesit-node-text node)
+                  (treesit-node-start node)
+                  (treesit-node-end node))
+      (f90-ts--complete-smart-end-node
+       node
+       #'f90-ts--complete-smart-end-show))))
 
 
 ;;------------------------------------------------------------------------------
