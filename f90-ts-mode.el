@@ -840,11 +840,9 @@ Depending on context, we might need to drop children of PARENT or use grandparen
     ;; here: (cond1 .and. cond2) are implicitly parenthesised
     ;; solution walk up to find root node of logical_expression type,
     ;; then expand logical_expression (but not parenthesised_expression) recursively
-    (when-let ((root (cl-loop
-                      for current = parent then next
-                      for next = (treesit-node-parent current)
-                      while (string= "logical_expression" (treesit-node-type next))
-                      finally return current)))
+    (when-let ((root (treesit-parent-while
+                      parent
+                      (lambda (n) (string= "logical_expression" (treesit-node-type n))))))
       (f90-ts-inspect-node :indent root "root")
       (let ((children (f90-ts--align-continued-expand-logical-expression root)))
         (f90-ts-log :indent "cont-logexpr: %s" children)
