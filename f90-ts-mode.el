@@ -668,7 +668,7 @@ to position, which also works for node=nil)."
 (defun previous-stmt-anchor (node parent bol)
   "Anchor at previous statements indentation."
   (if-let ((prev-stmt (f90-ts--previous-stmt node parent)))
-      (f90-ts--node-indent-pos prev-stmt)
+      (f90-ts--indent-pos-at-node prev-stmt)
     bol))
 
 
@@ -683,7 +683,7 @@ with the previous relevant line."
          (prev-neigh (f90-ts--previous-stmt node parent))
          (node-sel (or prev-sib prev-neigh parent node)))
     (if node-sel
-        (f90-ts--node-indent-pos node-sel)
+        (f90-ts--indent-pos-at-node node-sel)
       bol)))
 
 
@@ -1587,7 +1587,7 @@ and `f90-comment-region-prefix`."
 
 
 ;;------------------------------------------------------------------------------
-;; auxiliary
+;; auxiliary predicates
 
 (defcustom f90-ts-special-var-regexp "\\_<\\(self\\|this\\)\\_>"
   "Regular expression for matching names of special variables like
@@ -1724,6 +1724,41 @@ find relevant nodes."
     (not (member type (list "comment" "ERROR")))))
 
 
+(defun f90-ts-node-overlap-region-p (node start end)
+  "Return true if NODE overlaps with region START END."
+  (and (< (treesit-node-start node) end)
+       (> (treesit-node-end node)   start)))
+
+
+;;------------------------------------------------------------------------------
+;; auxiliary walk and query functions
+
+(defun f90-ts--search-subtree (root pred &optional start end prune reversed)
+  "Collect nodes within subtree of ROOT (not necessarily the treesitter
+root) for which PRED returns non-nil.
+If START and END are non-nil, only visit nodes overlapping that region.
+If PRUNE is non-nil, do not descend into children of nodes that
+satisfy PRED.
+If REVERSED is true, return in reversed order."
+  (f90-ts-log :auxiliary "root %s" root)
+  (let (nodes)
+    (cl-labels
+        ((traverse (node)
+           (when (or (null start)
+                     (null end)
+                     (f90-ts-node-overlap-region-p node start end))
+             (let ((match (funcall pred node)))
+               (when match
+                 (push node nodes))
+               (unless (and match prune)
+                 (dolist (child (treesit-node-children node))
+                   (traverse child)))))))
+      (traverse root))
+    (if reversed
+        nodes
+      (nreverse nodes))))
+
+
 ;; currently not used, but might be useful
 (defun f90-ts--statement-at-node (node)
   "For a node, find the most relevant (grand...)parent node starting at
@@ -1816,7 +1851,7 @@ PREDICATE. Take the last of all children satisfying this condition."
       ;;(f90-ts-inspect-node :auxiliary node-amp2 "na2")
       ;;(f90-ts-inspect-node :auxiliary node-indent "nai")
 
-      ;; this is a bit tricky: for a continuation line, there are two unnamed node "&"
+      ;; this is a bit tricky: for a continuation line, there are two unnamed nodes "&"
       ;; one at the back-to-indentation position, and one on the previous line,
       ;; but treesit-node-at does not return the ampersand at back-to-indentation, but
       ;; the next leaf node with same start position;
@@ -1874,32 +1909,6 @@ For empty NODES, return an empty list."
    nodes))
 
 
-(defun f90-ts--position-within-stmt-p (node pos)
-  "Check whether position POS is within some statement with continuation lines.
-To this end, start at NODE (assumed to be the previous-stmt) and walk lines using
-ampersand nodes at end of line, skipping empty or comment lines until either POS
-is passed or statement is finished. This is done to also handle error cases where
-the statement itself is not yet stitched into an encompassing node.
-Walk at most L true lines. Comments and empty lines do not count."
-  (let ((cur-line (line-number-at-pos))
-        (n node))
-    (while (and n
-                (< (f90-ts--node-line n) cur-line))
-      ;;(f90-ts-inspect-node :auxiliary n "w1")
-      (let ((last (f90-ts--last-node-on-line (treesit-node-start n))))
-        ;;(f90-ts-inspect-node :auxiliary last "last")
-        (setq n (when (and last (string= (treesit-node-type last) "&"))
-                  (treesit-node-next-sibling last)))
-        ;;(f90-ts-inspect-node :auxiliary n "w2")
-        (while (and n
-                    (< (f90-ts--node-line n) cur-line)
-                    (f90-ts--node-type-p n "comment"))
-          ;;(f90-ts-inspect-node :auxiliary n "w3")
-          (setq n (treesit-node-next-sibling n)))))
-    ;;(f90-ts-inspect-node :auxiliary n "f")
-    (and n t)))
-
-
 (defun f90-ts--after-stmt-line1-p (node pos)
   "Check whether position POS is right after the first line of a statement
 possibly spread over several lines. Empty lines are automatically skipped
@@ -1919,12 +1928,20 @@ as those are not present in the tree."
          (not (< (f90-ts--node-line nsib) cur-line)))))
 
 
-(defun f90-ts--node-indent-pos (node)
+(defun f90-ts--indent-pos-at-node (node)
   "Determine indentation position of line where start of NODE is located."
   (save-excursion
     (goto-char (treesit-node-start node))
     (back-to-indentation)
     (point)))
+
+
+(defun f90-ts--node-at-indent-pos (pos)
+  "Determine node at indentation position of line determined by POS."
+  (save-excursion
+    (goto-char pos)
+    (back-to-indentation)
+    (treesit-node-at (point))))
 
 
 (defun f90-ts--node-line (node)
