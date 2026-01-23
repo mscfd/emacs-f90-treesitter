@@ -690,11 +690,13 @@ with the previous relevant line."
 ;;++++++++++++++
 ;; offset functions: general
 
-(defun f90-ts--minus-offset (offset)
-  "Returns an offset function which returns -OFFSET.
-Mainly necessary for error cases without proper parent trees to use."
-  (lambda (node parent bol &rest _)
-    (- offset)))
+;; We cannot directly write (defun f90-ts--minus-offset (offset) ...)
+;; and use it in indent rules with the desired offset value like
+;; f90-ts-indent-block, as this bakes the current value into the rule,
+;; and makes it immune to later changes
+(defun f90-ts--minus-block-offset (_node _parent _bol &rest _)
+  "Returns offset -f90-ts-indent-block uncondionally."
+  (- f90-ts-indent-block))
 
 
 (defun f90-ts--indent-toplevel-offset (node parent _bol)
@@ -1198,12 +1200,12 @@ For example: argument lists, association lists, (logical) expressions with align
     ((n-p-ps nil                "elseif_clause" "elseif") parent f90-ts-indent-block)
 
     ((n-p-ps "elseif_clause"    "ERROR" "if") previous-stmt-anchor 0)
-    ((n-p-gp "elseif_clause"    "ERROR" nil)  previous-stmt-anchor (f90-ts--minus-offset ,f90-ts-indent-block))
+    ((n-p-gp "elseif_clause"    "ERROR" nil)  previous-stmt-anchor f90-ts--minus-block-offset)
 
     ((n-p-ps "else_clause"      "ERROR" "if")     previous-stmt-anchor 0)
     ((n-p-ps "else_clause"      "ERROR" "elseif") previous-stmt-anchor 0)
-    ((n-p-gp "else_clause"      "ERROR" nil)      previous-stmt-anchor (f90-ts--minus-offset ,f90-ts-indent-block))
-    ((n-p-gp "else"             "ERROR" nil)      previous-stmt-anchor (f90-ts--minus-offset ,f90-ts-indent-block))
+    ((n-p-gp "else_clause"      "ERROR" nil)      previous-stmt-anchor f90-ts--minus-block-offset)
+    ((n-p-gp "else"             "ERROR" nil)      previous-stmt-anchor f90-ts--minus-block-offset)
 
     ((n-p-ps nil                "ERROR" "if")     previous-stmt-anchor f90-ts-indent-block)
     ((n-p-ps nil                "ERROR" "elseif") previous-stmt-anchor f90-ts-indent-block)
@@ -1470,7 +1472,6 @@ Currently it handles end statements."
       (f90-ts-log :complete "node-indent: %s" node-indent)
       (f90-ts-log :complete "complete at node: type=%s, start=%d, end=%d"
                   (treesit-node-type node)
-                  (treesit-node-text node)
                   (treesit-node-start node)
                   (treesit-node-end node))
       (f90-ts--complete-smart-end-node
