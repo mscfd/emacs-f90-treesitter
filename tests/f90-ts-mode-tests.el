@@ -249,7 +249,6 @@ at the end of file."
     f90-ts-indent-continued
     f90-ts-indent-lists-region
     f90-ts-special-comment-regexp
-    f90-ts-log-categories
     require-final-newline)
   "Custom variables whose values can be temporarily overridden.")
 
@@ -274,7 +273,6 @@ at the end of file."
     (f90-ts-indent-continued . 7)
     (f90-ts-indent-lists-region . keep-or-first)
     (f90-ts-special-comment-regexp . "! \\(result\\|=\\{10\\}\\|arguments\\|local\\)$")
-    (f90-ts-log-categories . '())
     (require-final-newline . nil)
     )
   "Alist of custom variable values for testing purposes.")
@@ -310,12 +308,13 @@ at the end of file."
 different indentation values for each indentation type, so that
 selection of indentation rules is tested properly."
   (f90-ts-mode-tests-with-custom-testing
-    (with-temp-buffer
-      (insert-file-contents file)
-      (f90-ts-mode)
-      (setq-local indent-tabs-mode nil)
-      (treesit-parser-create 'fortran)
-      (font-lock-ensure)
-      (funcall body-fn))))
+   (let ((f90-ts-log-categories '()))
+     (with-temp-buffer
+       (insert-file-contents file)
+       (f90-ts-mode)
+       (setq-local indent-tabs-mode nil)
+       (treesit-parser-create 'fortran)
+       (font-lock-ensure)
+       (funcall body-fn)))))
 
 (provide 'f90-ts-mode-tests)
