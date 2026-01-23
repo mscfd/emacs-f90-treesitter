@@ -290,7 +290,7 @@ comments in the tree. Must be parsed before plain comments."
       "dimension" "contiguous" "volatile"
       "associate" "block" "critical"
       "where" "forall" "concurrent"] @font-lock-keyword-face)
-     (["print" "write"] @f90-ts-font-lock-intrinsic-face))
+     (["print" "write" "read"] @f90-ts-font-lock-intrinsic-face))
    ))
 
 
