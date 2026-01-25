@@ -572,8 +572,7 @@ associates and others."
 (defun f90-ts--continued-line-is ()
   "Check whether we are after some continued line."
   (lambda (node parent bol &rest _)
-    (when-let ((prev-stmt (f90-ts--previous-stmt node parent)))
-      ;;(f90-ts--after-stmt-line1-p prev-stmt (point)))))
+    (when-let ((prev-stmt (f90-ts--previous-stmt-first node parent)))
       (f90-ts--after-stmt-line1-p prev-stmt (point)))))
 
 
@@ -603,7 +602,7 @@ associates and others."
 (defun n-p-ps (type-n type-p type-ps)
   "Matcher that checks types of node, parent and previous statement."
   (lambda (node parent bol &rest _)
-    (let ((prev-stmt (f90-ts--previous-stmt node parent)))
+    (let ((prev-stmt (f90-ts--previous-stmt-keyword node parent)))
       (let ((result (and (f90-ts--node-type-p node type-n)
                          (f90-ts--node-type-p parent type-p)
                          (f90-ts--node-type-p prev-stmt type-ps))))
@@ -619,7 +618,7 @@ This matcher with the previous statement nodes is mainly used for
 incomplete statements with error nodes and empty lines, where node
 is nil and parent an ERROR."
   (lambda (node parent bol &rest _)
-    (let* ((prev-stmt (f90-ts--previous-stmt node parent))
+    (let* ((prev-stmt (f90-ts--previous-stmt-keyword node parent))
            (ps-sib (and prev-stmt (treesit-node-next-sibling prev-stmt))))
       (let ((result (and (f90-ts--node-type-p parent type-p)
                          (f90-ts--node-type-p prev-stmt type-ps)
@@ -667,7 +666,7 @@ to position, which also works for node=nil)."
 
 (defun previous-stmt-anchor (node parent bol)
   "Anchor at previous statements indentation."
-  (if-let ((prev-stmt (f90-ts--previous-stmt node parent)))
+  (if-let ((prev-stmt (f90-ts--previous-stmt-first node parent)))
       (f90-ts--indent-pos-at-node prev-stmt)
     bol))
 
@@ -680,8 +679,8 @@ with the previous relevant line."
   ;; find a meaningful previous "sibling" of node
   (let* ((prev-sib (and parent
                         (f90-ts--previous-sibling parent)))
-         (prev-neigh (f90-ts--previous-stmt node parent))
-         (node-sel (or prev-sib prev-neigh parent node)))
+         (prev-stmt (f90-ts--previous-stmt-first node parent))
+         (node-sel (or prev-stmt prev-sib parent node)))
     (if node-sel
         (f90-ts--indent-pos-at-node node-sel)
       bol)))
@@ -922,7 +921,7 @@ This offset is to be used with an column-0 anchor, and hence is a column number.
 (defun f90-ts--align-continued-list-cont (node parent bol)
   "Offset with continued-line option. Return prev-stmt offset
 plus indentation offset for continued lines."
-  (if-let ((prev-stmt (f90-ts--previous-stmt node parent)))
+  (if-let ((prev-stmt (f90-ts--previous-stmt-first node parent)))
       ;; we start with offset-0, so we need to add column of prev-stmt
       (+ f90-ts-indent-continued
          (f90-ts--node-column prev-stmt))
@@ -963,10 +962,10 @@ This offset function is to be used with an column-0 anchor."
   "The same as f90-ts--align-continued-list-offset, but for incomplete
 associate lists, where PARENT is an ERROR node.
 First map PARENT and call original function."
-  ;; the matcher ensures that prev-stmt and pssib have type "associate" and
+  ;; the matcher ensures that prev-stmt and ps-sib have type "associate" and
   ;; "association_list", the parent of prev-stmt must have type
   ;; associate_statement, and this one should contain a child association_list
-  (let* ((prev-stmt (f90-ts--previous-stmt node parent))
+  (let* ((prev-stmt (f90-ts--previous-stmt-first node parent))
          (ps-sib (treesit-node-next-sibling prev-stmt)))
     (f90-ts--align-continued-list-offset node ps-sib bol)))
 
@@ -1012,7 +1011,7 @@ additionally some node and parent info if MSG=first."
     (f90-ts-log :indent "---------info %s--------------" msg)
     (when (or (string= msg "first") (string= msg "catch all"))
       (let* ((grandparent (and parent (treesit-node-parent parent)))
-             (prev-stmt (f90-ts--previous-stmt node parent))
+             (prev-stmt (f90-ts--previous-stmt-keyword node parent))
              (pssib (and prev-stmt (treesit-node-next-sibling prev-stmt)))
              ;;(npsib (and node (treesit-node-prev-sibling node)))
              ;;(ppsib (and parent (treesit-node-prev-sibling parent)))
@@ -1031,7 +1030,7 @@ additionally some node and parent info if MSG=first."
           (f90-ts-log :indent (propertize ttttt 'face '(:foreground "brown3"))))
         (f90-ts-inspect-node :indent node "info[node]")
         (f90-ts-inspect-node :indent parent "info[parent]")
-        (f90-ts-inspect-node :indent parent "info[grandparent]")
+        (f90-ts-inspect-node :indent grandparent "info[grandparent]")
         (f90-ts-inspect-node :indent prev-stmt "info[prevstmt]")
         (f90-ts-inspect-node :indent pssib "info[pssib]")
         (f90-ts-inspect-node :indent child0 "info[child0]")
@@ -1820,7 +1819,22 @@ encountered."
    finally return current))
 
 
-(defun f90-ts--previous-stmt (node parent)
+(defun f90-ts--previous-stmt-keyword (node parent)
+  "Return the statement leaf node (usually some keyword like if,
+elseif, do, etc.) for `f90-ts-prev-stmt-first`. In case of a block label
+The first leaf node is the label, not the keyword. For use as anchor,
+the label is required. For use as matcher, we need the keyword.
+Keyword nodes become relevant for incomplete code with ERROR nodes."
+  ;; if the statement starts with a block label, then first is unnamed
+  ;; node label, and its parent is block_label_start_expression. Its
+  ;; next sibling is a keyword like if or do
+  (let* ((first (f90-ts--previous-stmt-first node parent))
+         (fparent (and first (treesit-node-parent first))))
+    (if (string= (treesit-node-type fparent) "block_label_start_expression")
+	    (treesit-node-next-sibling fparent)
+      first)))
+
+(defun f90-ts--previous-stmt-first (node parent)
   "Start at node and walk up the tree until a previous sibling can be found.
 Then walk down previous sibling to further narrow it down among its children.
 Finally return the leaf node at the start of the line with this previous node.
