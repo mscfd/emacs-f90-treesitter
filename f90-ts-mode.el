@@ -1967,15 +1967,17 @@ For empty NODES, return an empty list."
 
 
 (defun f90-ts--after-stmt-line1-p (node pos)
-  "Check whether position POS is right after the first line of a statement
-possibly spread over several lines. Empty lines are automatically skipped
-as those are not present in the tree."
+  "Check whether position POS is right after the line of where NODE is
+located, being part of a statement possibly spread over several lines.
+Empty lines are automatically skipped as those are not present in the tree."
+  ;; strategy: get last node on the same line as NODE, check whether it is &,
+  ;; goto next node, which is & on next line and compare with line number at pos;
   ;; note that if "&" is at end of line, then there is always a second "&"
   ;; at beginning of the next non-empty/non-comment line or at EOF.
   ;; Hence (treesit-next-sibling last) below can always be executed.
 
   ;;(f90-ts-inspect-node :auxiliary node "astmt1-node")
-  (let* ((cur-line (line-number-at-pos))
+  (let* ((cur-line (line-number-at-pos pos))
          (last (f90-ts--last-node-on-line (treesit-node-start node)))
          (nsib (when (and last (string= (treesit-node-type last) "&"))
                  (treesit-node-next-sibling last))))
