@@ -1475,9 +1475,11 @@ Currently it handles end statements."
                   (treesit-node-type node)
                   (treesit-node-start node)
                   (treesit-node-end node))
-      (f90-ts--complete-smart-end-node
-       node
-       #'f90-ts--complete-smart-end-show))))
+      (when (= (line-number-at-pos)
+               (f90-ts--node-line node))
+        (f90-ts--complete-smart-end-node
+         node
+         #'f90-ts--complete-smart-end-show)))))
 
 
 ;;------------------------------------------------------------------------------
