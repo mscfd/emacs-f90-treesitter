@@ -1938,11 +1938,10 @@ structure type, like subroutine_statement or similar."
     ;; if psib=nil, just return nil
     ;; if psib=ERROR node, descend and try to find some non-error node
     (cl-loop
-     with current = psib
-     while (and current
-                (string= (treesit-node-type current) "ERROR")
-                (treesit-node-child current 0 t))
-     do (setq current (treesit-node-child current 0 t))
+     for current = psib then child
+     for child = (and current (treesit-node-child current 0 t))
+     while (and child
+                (string= (treesit-node-type current) "ERROR"))
      finally return current)))
 
 
