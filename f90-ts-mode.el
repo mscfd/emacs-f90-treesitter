@@ -1372,46 +1372,38 @@ It does not descend into parenthesized_expressions."
     (list node)))
 
 
-(defun f90-ts--align-continued-children (parent)
-  "Determine relevant childrens of parent, depending on type of node of parent.
-Depending on context, we might need to drop children of PARENT or use grandparent."
-  (f90-ts-log :indent "cont-children parent type: %s" (treesit-node-type parent))
+(defun f90-ts--align-continued-node-items (list-context)
+  "Determine relevant (grand)childrens of LIST-CONTEXT, depending on
+type of list context."
+  (f90-ts-log :indent "cont-items list-context type: %s" (treesit-node-type list-context))
 
   (cond
-   ((string= (treesit-node-type parent) "parameters")
+   ((string= (treesit-node-type list-context) "parameters")
     ;; subroutine or function arguments drop the first child,
     ;; which is opening parenthesis
-    (when-let ((children (treesit-node-children parent)))
+    (when-let ((children (treesit-node-children list-context)))
       (seq-drop children 1)))
 
-   ((string= (treesit-node-type parent) "association_list")
+   ((string= (treesit-node-type list-context) "association_list")
     ;; expand it, as the it contains a list of nodes, whose children are required
-    (when-let ((children (treesit-node-children parent)))
+    (when-let ((children (treesit-node-children list-context)))
       (f90-ts--align-continued-expand-assoc children)))
 
-   ((string= (treesit-node-type parent) "association")
-    ;; one step up, then this is association_list, this happens on a continued line:
-    ;; (name &
-    ;;   => selector)
-    (when-let* ((grandparent (treesit-node-parent parent))
-                (aunts-uncles (treesit-node-children grandparent)))
-      (f90-ts--align-continued-expand-assoc aunts-uncles)))
-
-   ((or (string= (treesit-node-type parent) "binding_list")
-        (string= (treesit-node-type parent) "final_statement"))
-    (when-let ((children (treesit-node-children parent)))
+   ((or (string= (treesit-node-type list-context) "binding_list")
+        (string= (treesit-node-type list-context) "final_statement"))
+    (when-let ((children (treesit-node-children list-context)))
       ;; drop the (binding_name ...) part, and the => binding symbol
       (seq-drop children 2)))
 
-   ((string= (treesit-node-type parent) "variable_declaration")
-    (when-let ((children (treesit-node-children parent)))
+   ((string= (treesit-node-type list-context) "variable_declaration")
+    (when-let ((children (treesit-node-children list-context)))
       ;; drop everything before the first declarator field (first declared variable)
       (seq-drop-while
        (lambda (child)
          (not (string= "declarator" (treesit-node-field-name child))))
        children)))
 
-   ((string= (treesit-node-type parent) "logical_expression")
+   ((string= (treesit-node-type list-context) "logical_expression")
     ;; expand logical expression
     ;; example not yet handled: do while (cond1 .and. cond2 &
     ;;                                          .and. cond3)
@@ -1419,7 +1411,7 @@ Depending on context, we might need to drop children of PARENT or use grandparen
     ;; solution walk up to find root node of logical_expression type,
     ;; then expand logical_expression (but not parenthesised_expression) recursively
     (when-let ((root (treesit-parent-while
-                      parent
+                      list-context
                       (lambda (n) (string= "logical_expression" (treesit-node-type n))))))
       (f90-ts-inspect-node :indent root "root")
       (let ((children (f90-ts--align-continued-expand-logical-expression root)))
@@ -1428,12 +1420,12 @@ Depending on context, we might need to drop children of PARENT or use grandparen
 
    (t
     ;; for cases where nothing needs to be dropped (or just unidentified yet)
-    (when-let ((children (and parent (treesit-node-children parent))))
+    (when-let ((children (treesit-node-children list-context)))
       children))))
 
 
-(defun f90-ts--align-continued-tokens-prev (children cur-line node-sym)
-  "From a list of CHILDREN select relevant nodes prior to given
+(defun f90-ts--align-continued-tokens-prev (nitems cur-line node-sym)
+  "From a list NITEMS of node items select relevant nodes prior to given
 line CUR-LINE and satisfying some predicates like prior to CUR-LINE
 and of same symbol type NODE-SYM."
   ;; if node-sym is not known take almost all kind of nodes, except for continuation symbol
@@ -1441,11 +1433,11 @@ and of same symbol type NODE-SYM."
         (pred-node-sym (lambda (n) (eq (f90-ts--align-node-symbol n) node-sym))))
     ;; filter nodes by predicate, and if symbol based selection is empty,
     ;; fall back to almost all symbol selection (all except ampersand)
-    ;(f90-ts-log :indent "ap: %s" (mapcar #'f90-ts--align-node-symbol children))
+    ;(f90-ts-log :indent "ap: %s" (mapcar #'f90-ts--align-node-symbol nitems))
 
-    (let ((args-prev-almost (f90-ts--nodes-on-prev-lines children cur-line pred-almost))
+    (let ((args-prev-almost (f90-ts--nodes-on-prev-lines nitems cur-line pred-almost))
           (args-prev-sym (and node-sym
-                              (f90-ts--nodes-on-prev-lines children cur-line pred-node-sym))))
+                              (f90-ts--nodes-on-prev-lines nitems cur-line pred-node-sym))))
       ;(f90-ts-log :indent "apsym: %s" (mapcar #'f90-ts--align-node-symbol args-prev-sym))
       ;(f90-ts-log :indent "apall: %s" (mapcar #'f90-ts--align-node-symbol args-prev-almost))
       (or args-prev-sym args-prev-almost))))
@@ -1495,7 +1487,7 @@ This offset is to be used with an column-0 anchor, and hence is a column number.
      )))
 
 
-(defun f90-ts--align-continued-list-offset (variant node parent prev-stmt)
+(defun f90-ts--align-continued-list-offset0 (variant node list-context)
   "For lists of tokens like arguments, indent continued Fortran
 arguments under argument of previous lines, rotating through
 positions. If anonymous node like parenthesis, comma etc, then do
@@ -1504,57 +1496,52 @@ previous argument lines.
 This offset function is to be used with the previous-stmt-anchor.
 Offset is computed relative to PREV-STMT."
   (seq-let (cur-col cur-line node-sym) (f90-ts--align-continued-location node)
-    (let* ((children (and parent (f90-ts--align-continued-children parent)))
-           (node-sym-noamp (unless (eq node-sym 'ampersand) node-sym))
-           (offset0
-            (or (f90-ts--align-continued-select children cur-col cur-line node-sym-noamp variant)
-                ;; failed, most likely as there are on prior list items, as point is not on the
-                ;; line of the start of the list, use end position of
-                ;; parent node (argument_list or whatever) plus 1
-                ;; (for example end position corresponds to opening parenthesis)
-                (1+ (f90-ts--node-column parent)))))
-      (f90-ts-log :indent "cont childred: %s" children)
-      (- offset0 (f90-ts--node-column prev-stmt)))))
-
-
-(defun f90-ts--align-continued-assoc-error (variant node parent prev-stmt)
-  "The same as f90-ts--align-continued-list-offset, but for incomplete
-associate lists, where PARENT is an ERROR node.
-First map PARENT and call original function."
-  ;; the matcher ensures that prev-stmt and ps-sib have type "associate" and
-  ;; "association_list", the parent of prev-stmt must have type
-  ;; associate_statement, and this one should contain a child association_list
-  (let* ((ps-sib (treesit-node-next-sibling prev-stmt)))
-    (f90-ts--align-continued-list-offset node ps-sib prev-stmt)))
+    (f90-ts-log :indent "cont location: %s, %s" node (f90-ts--align-node-symbol node))
+    (f90-ts-log :indent "cont location: col=%d, line=%d, sym=%s" cur-col cur-line node-sym)
+    (let* ((nitems (f90-ts--align-continued-node-items list-context))
+           (node-sym-noamp (unless (eq node-sym 'ampersand) node-sym)))
+      (f90-ts-log :indent "cont items: %s" nitems)
+      (or (f90-ts--align-continued-select nitems cur-col cur-line node-sym-noamp variant)
+          ;; failed, most likely as there are on prior list nitems, as point is not on the
+          ;; line of the start of the list, use end position of
+          ;; list-context node (argument_list or whatever) plus 1
+          ;; (for example end position corresponds to opening parenthesis)
+          (1+ (f90-ts--node-column list-context)))
+      )))
 
 
 ;;++++++++++++++
 ;; offset functions: continued lines
 ;; determine whether list or standard case
 
-(defun f90-ts--indent-continued-context (parent ps-key ps-sib)
+(defun f90-ts--indent-continued-list-context (parent ps-key ps-sib)
   "In case some list option is active, determine whether we are within
-a list like context."
-  (cond
-   ;; functions and subroutines
-   (     (f90-ts--node-type-p parent "argument_list")         'list-offset)
-   ((and (f90-ts--node-type-p parent "parameters")
-         (or (f90-ts--node-type-p ps-key "function")
-             (f90-ts--node-type-p ps-key "subroutine")))   'list-offset)
+a list like context and the relevant parent. Often this is PARENT,
+but sometimes a related node like grandparent, ps-sib etc.
+Return value nil signals that this is not a list context."
+  (let ((gp      (and parent (treesit-node-parent parent)))
+        (gps-sib (and ps-sib (treesit-node-parent ps-sib))))
+    (cond
+     ;; functions and subroutines
+     (     (f90-ts--node-type-p parent "argument_list")    parent)
+     ((and (f90-ts--node-type-p parent "parameters")
+           (or (f90-ts--node-type-p ps-key "function")
+               (f90-ts--node-type-p ps-key "subroutine"))) parent)
 
-   ;; logical expressions
-   ((and (f90-ts--node-type-p parent "logical_expression")
-         (or (f90-ts--node-type-p ps-key "do")
-             (f90-ts--node-type-p ps-key "if")))           'list-offset)
+     ;; logical expressions
+     ((and (f90-ts--node-type-p parent "logical_expression")
+           (or (f90-ts--node-type-p ps-key "do")
+               (f90-ts--node-type-p ps-key "if")))           parent)
 
-   ;; binding and method lists in derived type definition
-   (     (f90-ts--node-type-p parent "binding_list")          'list-offset)
-   (     (f90-ts--node-type-p parent "final_statement")       'list-offset)
+     ;; binding and method lists in derived type definition
+     (     (f90-ts--node-type-p parent "binding_list")    parent)
+     (     (f90-ts--node-type-p parent "final_statement") parent)
 
-   ;; variable declarations
-   (     (f90-ts--node-type-p parent "variable_declaration")  'list-offset)
-   (t 'default-offset)
-   ))
+     ;; variable declarations
+     (     (f90-ts--node-type-p parent "variable_declaration") parent)
+
+     (t nil)
+     )))
 
 
 (defun f90-ts--indent-continued-offset (node parent bol &rest _)
@@ -1574,13 +1561,16 @@ is not catched by the continued line matcher."
       (let* ((prev-stmt-1 (f90-ts--previous-stmt-first node parent))
              (ps-key (f90-ts--previous-stmt-keyword-by-first prev-stmt-1))
              (ps-sib (and prev-stmt-1 (treesit-node-next-sibling prev-stmt-1)))
-             (context (f90-ts--indent-continued-context parent ps-key ps-sib))
+             (list-context (f90-ts--indent-continued-list-context parent ps-key ps-sib))
              )
-        (f90-ts-log :indent "continued offset: context=%s" context)
-        (pcase context
-          ('list-offset      (f90-ts--align-continued-list-offset variant node parent prev-stmt-1))
-          ('default-offset   f90-ts-indent-continued)
-          (_               (cl-assert nil t "unexpected context"))
+        (f90-ts-log :indent "continued offset: list-context=%s" list-context)
+        (if list-context
+            ;; make the offset relative to first statement node
+            ;; (important for indent-region and batch processing)
+            (- (f90-ts--align-continued-list-offset0 variant node list-context)
+               (f90-ts--node-column prev-stmt-1))
+          ;; default continued line offset
+          f90-ts-indent-continued
           )))))
 
 

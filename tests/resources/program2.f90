@@ -27,7 +27,7 @@ contains
 
  subroutine set(obj, i, j)
       class(extra_t), intent(out) :: obj
-      integer, intent(in) :: i,
+      integer, intent(in) :: i,&
                              j
       obj%ival = i
       obj%jval = j

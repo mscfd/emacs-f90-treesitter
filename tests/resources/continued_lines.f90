@@ -4,7 +4,7 @@ end function fun_result
 
 
 real function fun_type(x, &
-     y)
+       y)
 end function fun_type
 
 subroutine sub_simple(x, y, z, &
@@ -14,17 +14,17 @@ subroutine sub_simple(x, y, z, &
 end subroutine sub_simple
 
 module subroutine sub_mod(x, &
-     y)
+       y)
 end subroutine sub_mod
 
 module procedure sub_proc(x, &
-     y)
+       y)
 end module procedure
 
 
 
 
-
+! some fancy continuations
 function fun(x1, x2, x3, &
                  x4, x5)&
                  result( &
@@ -49,7 +49,7 @@ function fun(x1, x2, x3, &
 
               z,&
               u,  & ! fourth arg
-              v
+              v&
              )
 
      x &
