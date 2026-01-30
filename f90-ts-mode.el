@@ -1277,6 +1277,40 @@ with the previous relevant line."
 ;;++++++++++++++
 ;; offset functions: lists on continued lines
 ;; rotation logic
+
+(defun f90-ts--align-node-symbol (node)
+  "Return a symbol for NODE for grouping nodes. Relevant nodes
+for alignment are mostly selected among nodes with same symbol.
+If NODE is nil return nil."
+  (when node
+    ;;(f90-ts-log :indent "symbol node: type=%s, field=%s, text=%s" (treesit-node-type node) (treesit-node-field-name node) (treesit-node-text node))
+    (cond
+     ((string= (treesit-node-type node) "ERROR")
+      'error)
+
+     ((string= (treesit-node-type node) "comment")
+      'comment)
+
+     ((string= (treesit-node-field-name node) "operator")
+      'operator)
+
+     ((string= (treesit-node-type node) "&")
+      ;; text is not always "&" (like virtual ampersand at beginning of line)
+      'ampersand)
+
+     (t
+      (let ((text (treesit-node-text node)))
+        (pcase text
+          ("("  'parenthesis)
+          (")"  'parenthesis)
+          (","  'comma)
+          ("&"  'ampersand)
+          ("=>" 'associate)
+          ;; default: argument for anything else (this is probably a named node
+          ;; of type identifier, number_literal, call_expression etc.
+          (_    'named)))))))
+
+
 (defun f90-ts--align-continued-location (node)
   "Determine node dependent position related values. These are current
 column, line number and symbol type at point (for deciding where to
@@ -1502,39 +1536,6 @@ First map PARENT and call original function."
   (let* ((prev-stmt (f90-ts--previous-stmt-first node parent))
          (ps-sib (treesit-node-next-sibling prev-stmt)))
     (f90-ts--align-continued-list-offset node ps-sib bol)))
-
-
-(defun f90-ts--align-node-symbol (node)
-  "Return a symbol for NODE for grouping nodes. Relevant nodes
-for alignment are mostly selected among nodes with same symbol.
-If NODE is nil return nil."
-  (when node
-    ;;(f90-ts-log :indent "symbol node: type=%s, field=%s, text=%s" (treesit-node-type node) (treesit-node-field-name node) (treesit-node-text node))
-    (cond
-     ((string= (treesit-node-type node) "ERROR")
-      'error)
-
-     ((string= (treesit-node-type node) "comment")
-      'comment)
-
-     ((string= (treesit-node-field-name node) "operator")
-      'operator)
-
-     ((string= (treesit-node-type node) "&")
-      ;; text is not always "&" (like virtual ampersand at beginning of line)
-      'ampersand)
-
-     (t
-      (let ((text (treesit-node-text node)))
-        (pcase text
-          ("("  'parenthesis)
-          (")"  'parenthesis)
-          (","  'comma)
-          ("&"  'ampersand)
-          ("=>" 'associate)
-          ;; default: argument for anything else (this is probably a named node
-          ;; of type identifier, number_literal, call_expression etc.
-          (_    'named)))))))
 
 
 ;;++++++++++++++
