@@ -1543,9 +1543,10 @@ The selected column is relative to column 0."
   (let* ((items-col-unsorted (seq-map
                               (lambda (n)
                                 (if (integerp n)
-                                    n
+                                    (f90-ts--column-number-at-pos n)
                                   (f90-ts--node-column n)))
                               items))
+;; xxx sort by col but keep buffer position? as (col . position)?
          (items-col (seq-uniq (seq-sort #'< items-col-unsorted)))
          (is-aligned (member cur-col items-col)))
     ;;(f90-ts-log :indent "cont columns: %s" items-col)
@@ -1578,13 +1579,11 @@ The selected column is relative to column 0."
      )))
 
 
-(defun f90-ts--align-continued-list-offset (variant node list-context prev-stmt-1)
+(defun f90-ts--align-continued-list-anchor (variant node list-context prev-stmt-1)
   "Determine items on continued lines in a list-like context and use
-their columns for indentation/ If anonymous node like parenthesis,
-comma etc, then do the same, but rotate through columns with symbols
-of same kind on previous argument lines.
-This offset function is to be used with the previous-stmt-anchor.
-Offset is computed relative to PREV-STMT."
+their buffer positions for alignmet. If anonymous node like parenthesis,
+comma etc, then do the same, but rotate through items with symbols
+of same kind on previous argument lines."
   (seq-let (cur-col cur-line node-sym) (f90-ts--align-continued-location node)
     (f90-ts-log :indent "cont location: %s, %s" node (f90-ts--align-node-symbol node))
     (f90-ts-log :indent "cont location: col=%d, line=%d, sym=%s" cur-col cur-line node-sym)
@@ -1598,7 +1597,7 @@ Offset is computed relative to PREV-STMT."
            (items-filtered (f90-ts--align-continued-items-filter
                             items-prev
                             node-sym))
-           (offsets-other (funcall get-other list-context items-filtered node-sym prev-stmt-1))
+           (anchor-other (funcall get-other list-context items-filtered node-sym prev-stmt-1))
            )
 
       (f90-ts-log :indent "cont items context: %s" items-context)
@@ -1616,7 +1615,7 @@ Offset is computed relative to PREV-STMT."
       )))
 
 ;;++++++++++++++
-;; offset functions: continued lines
+;; anchor functions: continued lines
 ;; determine whether list or standard case
 
 ;; TODO: for nested list contexts, the prev-stmt-1 reference is not correct,
@@ -1655,10 +1654,11 @@ from the list-context-type alist."
     (plist-get properties pkey)))
 
 
-(defun f90-ts--indent-continued-list-context (pos parent ps-key)
+(defun f90-ts--align-continued-list-context (pos parent ps-key)
   "In case some list alignment option is active, determine whether we
-are within a list type context and the relevant parent. Often this is
-PARENT, but sometimes a related node like grandparent, ps-sib etc.
+are within a list type context and the relevant context node. Often
+this is PARENT, but sometimes a related node like grandparent, etc.
+The smallest such context, starting on a previous line is returned.
 Return value nil signals that this is not a list context."
   (let* ((line (line-number-at-pos pos))
          (stmt-root (treesit-node-on (treesit-node-start ps-key)
@@ -1689,7 +1689,8 @@ Return value nil signals that this is not a list context."
       stmt-min)))
 
 
-(defun f90-ts--indent-continued-offset (node parent bol &rest _)
+;;; XXX offset -> anchor
+(defun f90-ts--continued-line-anchor (node parent bol &rest _)
   "Determine, whether we are on a continued line of a list like node,
 where list item should be aligned, or some standard continued line with
 default offset.
@@ -1706,19 +1707,20 @@ is not catched by the continued line matcher."
       (let* ((prev-stmt-1 (f90-ts--previous-stmt-first node parent))
              (ps-key (f90-ts--previous-stmt-keyword-by-first prev-stmt-1))
              (pos (f90-ts--node-start-or-point node))
-             (list-context (f90-ts--indent-continued-list-context pos parent ps-key))
+             (list-context (f90-ts--align-continued-list-context pos parent ps-key))
              )
         (f90-ts-log :indent "continued offset: list-context=%s" list-context)
         (f90-ts-log :indent "continued region: %s" (treesit-node-on (treesit-node-start prev-stmt-1)
                                                                     (treesit-node-end parent)))
 
         (if list-context
-            (f90-ts--align-continued-list-offset variant
+            (f90-ts--align-continued-list-anchor variant
                                                  node
                                                  list-context
                                                  prev-stmt-1)
           ;; default continued line offset
-          f90-ts-indent-continued
+          (+ (treesit-node-start prev-stmt-1)
+             f90-ts-indent-continued)
           )))))
 
 
@@ -1815,7 +1817,7 @@ with !$ or !$omp")
     ;;                  x3, x4, x5) &
     ;;      result(val)
     ;; by how much should result be indented? x3 is not a good anchor!
-    ((f90-ts--continued-line-some-is) previous-stmt-anchor f90-ts--indent-continued-offset)
+    ((f90-ts--continued-line-some-is) f90-ts--continued-line-anchor 0)
     )
   "Indentation rules for continued lines. Argument lists and similar continued lines must have been dealt with before.")
 
