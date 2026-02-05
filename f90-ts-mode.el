@@ -1742,9 +1742,14 @@ And the associated function to extract relevant children for alignemnt.")
 (defun f90-ts--get-list-context-prop (pkey list-context)
   "Lookup LIST-CONTEXT and return the property value for PKEY
 from the list-context-type alist."
-  (let ((properties (cdr (assoc (treesit-node-type list-context)
-                                f90-ts--list-context-types)))
+  ;;(f90-ts-log :indent "context-prop: context=%s " (treesit-node-type list-context))
+  (let ((properties (alist-get (treesit-node-type list-context)
+                               f90-ts--list-context-types
+                                nil
+                                nil
+                                #'string=))
         )
+    ;;(f90-ts-log :indent "context-prop: prop=%s " properties)
     (plist-get properties pkey)))
 
 
@@ -2155,51 +2160,102 @@ smart end completion. Statements not yet supported are commented out.")
         ))))
 
 
+
+(defconst f90-ts--complete-smart-end-name-query
+  `(("program"                 . "(program (program_statement \"program\" @construct (_) * (name) @name))")
+    ("module"                  . "(module (module_statement \"module\" @construct (_) * (name) @name))")
+    ("submodule"               . "(submodule (submodule_statement \"submodule\" @construct (_) * (name) @name))")
+    ("subroutine"              . "(subroutine (subroutine_statement \"subroutine\" @construct name: (_) @name))")
+    ("function"                . "(function (function_statement \"function\" @construct name: (_) @name))")
+    ("interface"               . ,(concat "(interface (interface_statement (abstract_specifier)?"
+                                          "\"interface\" @construct"
+                                          "[((name) @name)"
+                                          " ((operator) @name)"
+                                          " ((assignment) @name)]?"
+                                          "))"
+                                          ))
+    ("derived_type_definition" . "(derived_type_definition (derived_type_statement \"type\" @construct (_) * (type_name) @name))")
+    ("if_statement"            . "(if_statement (block_label_start_expression (_) @name)? \"if\" @construct)")
+    ("do_loop"                 . "(do_loop (block_label_start_expression (_) @name)? (do_statement \"do\" @construct))")
+    ("associate_statement"     . "(associate_statement (block_label_start_expression (_) @name)? \"associate\" @construct)")
+    )
+  "Treesitter queries to extract relevant nodes for smart end completion.")
+
+
+(defun f90-ts--complete-smart-end-extract (node capture)
+  "Extract relevant nodes from CAPTURES. Somehow anchoring at NODE does
+not work. First search for root=NODE. Then extract subsequent matches,
+some of which are optional and possibly not present or in different
+order."
+  (cl-loop
+   for (cap_sym . n) in capture
+   with collecting = nil
+   until (and collecting (eq cap_sym 'root))
+   when (and (not collecting)
+             (eq cap_sym 'root)
+             (treesit-node-eq n node))
+      do (setq collecting t)
+   when (and collecting (not (eq cap_sym 'root)))
+      collect (cons cap_sym n)))
+
+
 (defun f90-ts--complete-smart-end-name (node)
-  "Extract the name from NODE. Depending on NODE type, extraction is
-different, as subtrees are built differently."
-  (when-let* ((query (pcase (treesit-node-type node)
-                       ("program"                  "(program (program_statement (_) * (name) @name))")
-                       ("module"                   "(module (module_statement (_) * (name) @name))")
-                       ("submodule"                "(submodule (submodule_statement (_) * (name) @name))")
-                       ("subroutine"               "(subroutine (subroutine_statement name: (_) @name))")
-                       ("function"                 "(function (function_statement name: (_) @name))")
-                       ("interface"                "(interface (interface_statement (_) * (name) @name))")
-                       ("derived_type_definition"  "(derived_type_definition (derived_type_statement (_) * (type_name) @name))")
-                       ("if_statement"             "(if_statement (block_label_start_expression (_) @name))")
-                       ("do_loop"                  "(do_loop (block_label_start_expression (_) @name))")
-                       ("associate_statement"      "(associate_statement (block_label_start_expression (_) @name))")
-                       (_                          nil)
-                       ))
+  "Extract construct type and name from NODE. Depending on NODE type,
+extraction is different, as subtrees are built differently.
+The construct type is fixed, but we want to query the lower/upper case
+to match usage in opening and end statement."
+  (when-let* ((query (alist-get (treesit-node-type node)
+                                f90-ts--complete-smart-end-name-query
+                                nil
+                                nil
+                                #'string=))
               (query-root (concat query " @root"))
-              (capture (treesit-query-capture node query-root)))
-    ;; we added an @root to also get the root node of the capture subtree, thues
-    ;; capture result is an alist (('root, root), ('name, name), ('root, root), ('name, name), ...),
+              (capture-all (treesit-query-capture node query-root))
+              (capture     (f90-ts--complete-smart-end-extract node capture-all))
+              )
+    ;; we added an @root to also get the root node of the captured subtree,
+    ;; captured result is an alist (('root, root), ('construct, construct) ('name, name),
+    ;; ('root, root), ('construct, construct) ('name, name), ...),
     ;; where root and name are the captured nodes,
     ;; we need to make sure that root=node, which might not be the case in nested block structure
     ;; (where the inner loop, if etc. also matches),
     ;; this could be done with the :anchor pattern, but it is rejected... syntax not valid?
+    ;;(f90-ts-log :complete "smart end name captured: cap-all=%s" capture-all)
     (f90-ts-log :complete "smart end name captured: cap=%s" capture)
-    (let ((name (cl-loop for (root-cap name-cap) on capture by #'cddr
-                         do (progn
-                              (cl-assert (eq (car root-cap) 'root) nil
-                                         "expected 'node capture, got '%s'" (car root-cap))
-                              (cl-assert (eq (car name-cap) 'name) nil
-                                         "expected 'name capture, got '%s'" (car name-cap)))
-                         when (treesit-node-eq (cdr root-cap) node)
-                         return (cdr name-cap))))
-      (f90-ts-log :complete "captured name node: name-node=%s" name)
-      name)))
+    (let* ((construct-node (alist-get 'construct capture))
+           (name-node (alist-get 'name capture)))
+      (f90-ts-log :complete "smart end name captured: construct=%s name=%s" construct-node name-node)
+      (cl-assert construct-node
+                 nil
+                 "complete-smart-end: no construct node found")
+      (list
+       (and construct-node (treesit-node-text construct-node t))
+       (and name-node (treesit-node-text name-node t)))
+      )))
 
 
-(defun f90-ts--complete-smart-end-compose (node construct-type)
-  "Create an 'end CONSTRUCT-TYPE name' completion from NODE.
-CONSTRUCT-TYPE is a string like 'subroutine', 'function', 'module', etc."
-  (if-let ((name-node (f90-ts--complete-smart-end-name node)))
-      (let ((name (treesit-node-text name-node t)))
-        (format "end %s %s" construct-type name))
-    ;; Fallback if no name found
-    (format "end %s" construct-type)))
+(defun f90-ts--complete-smart-end-compose (node)
+  "Create an 'end CONSTRUCT name' completion from NODE.
+CONSTRUCT is a string like 'subroutine', 'function', 'module', etc."
+  (let ((construct-name (f90-ts--complete-smart-end-name node)))
+    (cl-assert construct-name
+               nil
+               "complete-smart-end: structure query failed")
+    (let* ((construct (car construct-name))
+           (name (cadr construct-name))
+           (c0 (substring construct 0 1))
+           (end
+            (cond
+             ((string= construct (upcase construct))
+              "END")
+             ((string= c0 (upcase c0))
+              "End")
+             (t
+              "end"))))
+      (if name
+          (format "%s %s %s" end construct name)
+        ;; fallback if no name found
+        (format "%s %s" end construct)))))
 
 
 (defun f90-ts--complete-smart-end-map (node)
@@ -2207,16 +2263,16 @@ CONSTRUCT-TYPE is a string like 'subroutine', 'function', 'module', etc."
   (let ((type (treesit-node-type node)))
     (f90-ts-log :complete "smart-end-map type of node: %s" type)
     (pcase type
-      ("program"                 (f90-ts--complete-smart-end-compose node "program"))
-      ("module"                  (f90-ts--complete-smart-end-compose node "module"))
-      ("submodule"               (f90-ts--complete-smart-end-compose node "submodule"))
-      ("subroutine"              (f90-ts--complete-smart-end-compose node "subroutine"))
-      ("function"                (f90-ts--complete-smart-end-compose node "function"))
-      ("derived_type_definition" (f90-ts--complete-smart-end-compose node "type"))
-      ("interface"               (f90-ts--complete-smart-end-compose node "interface"))
-      ("if_statement"            (f90-ts--complete-smart-end-compose node "if"))
-      ("do_loop"                 (f90-ts--complete-smart-end-compose node "do"))
-      ("associate_statement"     (f90-ts--complete-smart-end-compose node "associate"))
+      ("program"                 (f90-ts--complete-smart-end-compose node))
+      ("module"                  (f90-ts--complete-smart-end-compose node))
+      ("submodule"               (f90-ts--complete-smart-end-compose node))
+      ("subroutine"              (f90-ts--complete-smart-end-compose node))
+      ("function"                (f90-ts--complete-smart-end-compose node))
+      ("derived_type_definition" (f90-ts--complete-smart-end-compose node))
+      ("interface"               (f90-ts--complete-smart-end-compose node))
+      ("if_statement"            (f90-ts--complete-smart-end-compose node))
+      ("do_loop"                 (f90-ts--complete-smart-end-compose node))
+      ("associate_statement"     (f90-ts--complete-smart-end-compose node))
 
       ;; TODO: just simple completion, no label or name extraction so far
       ("block_construct"         "end block")
