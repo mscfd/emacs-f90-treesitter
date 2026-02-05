@@ -2356,16 +2356,36 @@ skips empty lines."
      )))
 
 
+(defun f90-ts--indent-stmt-region (beg end)
+  "Apply indent region from begin of line at BEG to end of line at END.
+Return true if the region was already properly indented (nothing was
+changed)."
+  (let ((beg-reg (save-excursion
+                    (goto-char beg)
+                    (line-beginning-position)))
+        (end-reg (save-excursion
+                    (goto-char end)
+                    (line-end-position))))
+    (f90-ts-log :indent "indent statement region: beg=%d, end=%d" beg-reg end-reg)
+    ;; possibly slow if continued lines are very long (but safer)
+    (let ((old-text (buffer-substring-no-properties beg-reg end-reg)))
+      (treesit-indent-region beg-reg end-reg)
+      (string= old-text (buffer-substring-no-properties beg-reg end-reg)))
+
+    ;; this is fast, but is indent-region implemented in such a way that tick
+    ;; increases only if indentation on some line really has changed?
+    ;; maybe this variant is not worth the risk
+    ;;(let ((old-tick (buffer-chars-modified-tick)))
+    ;;  (treesit-indent-region beg-reg end-reg)
+    ;;  (= old-tick (buffer-chars-modified-tick)))))
+    ))
+
+
 ;;------------------------------------------------------------------------------
 ;; Indentation and smart end completion
 
 ;; indent-line-function:   =f90-ts-indent-statement, called by indent-for-tab-command
 ;; indent-region-function: =f90-ts-indent-and-complete-region, called by indent-region
-
-;; TODO: make smart end completion optional (like nil, 'line, 'region, 'all or so)
-
-;; indent region variant is used internally, hence is overridden if
-;; tab version is required")
 
 (defvar-local f90-ts--align-continued-variant-tab nil
   "Current variant for indentation, if nil use region variant,
@@ -2374,27 +2394,31 @@ otherwise use tab variant.")
 
 (defun f90-ts-indent-statement ()
   "In general, this just calls `f90-ts--indent-and-complete`. However,
-if within a continued line region, then determine first line of
-statement and check indentation. If indentation changes, then move
-the whole statement by computed offset and invoke
-`f90-ts--indent-and-complete` with region choice for alignment.
-Otherwise with line choice."
+if within a continued line region, determine first line of statement
+and indent region from this first line up to and including current line.
+If indentation of current line has not changed, then indent the current
+line by invoking `f90-ts--indent-and-complete` to apply rules like
+rotation of list context items.
+Otherwise default indent with line choice."
   (interactive)
   (if (not (f90-ts--pos-within-continued-stmt-p (point)))
       ;; just do normal indentation
       (f90-ts--indent-and-complete-line)
     ;; multi-line statement
-    (let* ((node (f90-ts--first-node-on-line (point)))
+    (let* ((end (point))
+           (node (f90-ts--first-node-on-line end))
            (first (f90-ts--first-node-of-stmt node))
-           (start (treesit-node-start first)))
-      (let ((offset (f90-ts--indent-stmt-first first)))
-        (f90-ts-log :indent "indent offset: %d" offset)
-        (if (= 0 offset)
-            ;; no indentation applied, invoke indentation for current line
-            ;; like doing rotational alignment
-            (f90-ts--indent-and-complete-line)
-          (f90-ts--indent-stmt-rest start offset)
-          )))))
+           (beg (treesit-node-start first)))
+
+      (f90-ts-log :indent "indent statement region: tick1=%d" (buffer-chars-modified-tick))
+
+      (if (f90-ts--indent-stmt-region beg end)
+          ;; no indentation applied, invoke indentation for current line
+          ;; like doing rotational alignment
+          (f90-ts--indent-and-complete-line)
+        ;; statement up to current line was changed by indent statement region
+        (back-to-indentation))
+      )))
 
 
 (defun f90-ts--indent-and-complete-line ()
@@ -2408,11 +2432,11 @@ Otherwise with line choice."
           (f90-ts-log :complete "COMPLETE ==========================")
           (f90-ts--complete-smart-tab)
           (f90-ts-log :complete "DONE =========================="))
-      (setq f90-ts--align-continued-variant-tab nil))
-  )
+      (setq f90-ts--align-continued-variant-tab nil)
+      ))
 
 
-;; currently used by f90-ts-indent-and-complete-region
+;; used by f90-ts-indent-and-complete-region
 (defun f90-ts-complete-smart-end-region (start end)
   "Execute smart end completion in region, using treesitter nodes
 representing end constructs."
@@ -2433,7 +2457,6 @@ representing end constructs."
      for node in end-stmts
      do (f90-ts--complete-smart-end-node node)
      )))
-
 
 
 (defun f90-ts-indent-and-complete-region (start end)
@@ -2480,14 +2503,15 @@ based on the treesitter tree overlapping that region."
       (insert "\n" prefix)))
 
    ((f90-ts-bol-to-point-blank-p)
+    ;; this results in an empty line, no ampersand
     (delete-horizontal-space)
     (insert "\n"))
 
    (t
-    (f90-ts--break-line-insert-amp-at-end)
     (delete-horizontal-space)
+    (f90-ts--break-line-insert-amp-at-end)
     (newline 1)
-    ;;(if f90-beginning-ampersand (insert "&"))
+    (if f90-beginning-ampersand (insert "&"))
     ))
 
   (indent-according-to-mode))
@@ -2506,7 +2530,6 @@ based on the treesitter tree overlapping that region."
   "List of additional comment prefixes for interactive selection."
   :type '(repeat string)
   :group 'f90-ts)
-
 
 
 ;; The following code are adapted from `f90.el`, which is part of GNU Emacs.
@@ -2562,7 +2585,10 @@ and `f90-comment-region-prefix`."
 
   ;; create parser or report error
   (if (not (treesit-ready-p 'fortran))
-      (message "Tree-sitter parser for 'fortran not ready. Run `M-x treesit-install-language-grammar RET fortran RET' or ensure treesit-language-source-alist points to a built grammar.")
+      (message
+       (concat "Tree-sitter parser for 'fortran not ready. "
+               "Run `M-x treesit-install-language-grammar RET fortran RET' "
+               "or ensure treesit-language-source-alist points to a built grammar."))
     (treesit-parser-create 'fortran))
 
   ;; font-lock feature list controls what features are enabled for highlighting
@@ -2595,15 +2621,8 @@ and `f90-comment-region-prefix`."
   (setq-local mode-name "F90-TS"))
 
 
-;;(add-to-list 'auto-mode-alist '("\\.f90\\'" . f90-ts-mode))
-;;(add-to-list 'auto-mode-alist '("\\.f95\\'" . f90-ts-mode))
-;;(add-to-list 'auto-mode-alist '("\\.f03\\'" . f90-ts-mode))
-;;(add-to-list 'auto-mode-alist '("\\.f08\\'" . f90-ts-mode))
-;;(add-to-list 'auto-mode-alist '("\\.f\\'" . f90-ts-mode))
-
-
 ;;------------------------------------------------------------------------------
-;; log buffer
+;; debug: log buffer
 
 (defconst f90-ts-log-categories-all
   '(:info :debug :indent :fontlock :complete :auxiliary)
@@ -2733,7 +2752,7 @@ helper function invokes message."
 
 
 ;;------------------------------------------------------------------------------
-;; debug stuff
+;; debug: node inspection and other stuff
 
 (defun f90-ts-debug-font-lock ()
   "Show the compiled font-lock settings."
