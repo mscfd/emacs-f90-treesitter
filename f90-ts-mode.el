@@ -1228,6 +1228,18 @@ to position, which also works for node=nil)."
 ;;++++++++++++++
 ;; anchors
 
+(defun f90-ts--anchor-preproc-content (_n parent &rest _)
+  "Return start of the first non-preprocessor ancestor.
+Recursively skips preprocessor nodes to find the actual code context
+(module, subroutine, loop, etc.). Needed for nested #ifdef/#else blocks."
+  (let ((node parent))
+    (while (and node
+                (string-prefix-p "preproc_" (treesit-node-type node)))
+      (setq node (treesit-node-parent node)))
+    (if node
+        (treesit-node-start node)
+      (point-min))))
+
 (defun previous-stmt-anchor (node parent bol)
   "Anchor at previous statements indentation."
   (if-let ((prev-stmt (f90-ts--previous-stmt-first node parent)))
@@ -1462,7 +1474,7 @@ type definition."
       (f90-ts-log :indent "cont var-decl: pos=%d, decl-start=%d" pos decl-start)
       (if (< pos decl-start)
           attr-children
-        decl-children))))    
+        decl-children))))
 
 
 ;;++++++++++++++
@@ -1792,6 +1804,34 @@ debug info. Used as ',@(f90-ts-indent-rules-info \"msg\"')"
 with !$ or !$omp")
 
 
+(defvar f90-ts-indent-rules-preproc
+  `(;; Preprocessor directives
+    ,@(f90-ts-indent-rules-info "preproc")
+    ;; Directives: force to column 0
+    ((node-is "preproc_def") column-0 0)
+    ((node-is "preproc_include") column-0 0)
+    ((node-is "preproc_ifdef") column-0 0)
+    ((node-is "preproc_function") column-0 0)
+    ((node-is "preproc_function_def") column-0 0)
+    ((node-is "preproc_call") column-0 0)
+    ((node-is "preproc_if") column-0 0)
+    ((node-is "preproc_elif") column-0 0)
+    ((node-is "preproc_else") column-0 0)
+    ;; #else, #endif etc. (match logic for safety)
+    ((match "#.*" "preproc_.*") column-0 0)
+    ;; Content inside preprocessor blocks
+    ;; indent relative to outer context
+    ;; (Using recursive skipper for nested directives)
+    ((parent-is "preproc_ifdef") f90-ts--anchor-preproc-content f90-ts-indent-block)
+    ((parent-is "preproc_if")    f90-ts--anchor-preproc-content f90-ts-indent-block)
+    ((parent-is "preproc_elif")  f90-ts--anchor-preproc-content f90-ts-indent-block)
+    ((parent-is "preproc_else")  f90-ts--anchor-preproc-content f90-ts-indent-block)
+    ((parent-is "preproc_def")   f90-ts--anchor-preproc-content f90-ts-indent-block)
+    ((parent-is "preproc_function_def") f90-ts--anchor-preproc-content f90-ts-indent-block)
+    ((parent-is "preproc_function") f90-ts--anchor-preproc-content f90-ts-indent-block))
+  "Tree-sitter indent rules for preprocessor directives.")
+
+
 (defvar f90-ts-indent-rules-comments
   `(;; indent a sequence of comments with respect to previous comment
     ,@(f90-ts-indent-rules-info "comments")
@@ -1985,6 +2025,7 @@ with !$ or !$omp")
   `((fortran
      ,@f90-ts-indent-rules-test-first
      ,@f90-ts-indent-rules-openmp
+     ,@f90-ts-indent-rules-preproc
      ,@f90-ts-indent-rules-comments
      ,@f90-ts-indent-rules-continued
      ,@f90-ts-indent-rules-internal-proc
