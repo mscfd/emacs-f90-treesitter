@@ -11,66 +11,35 @@
   "Regexp matching files to compare output with.")
 
 
-(defun f90-ts-mode-tests ()
-  "Run all tests."
-  (ert #'f90-ts-mode-activates)
-  (ert #'f90-ts-mode-resources)
-  )
+;;------------------------------------------------------------------------------
+;; Auxiliary stuff
+
+(defun f90-ts-mode-tests--indent-buffer ()
+  "Indent current buffer, including the final line. This is relevant as
+we also want to test the final line, which is relevant during typing
+at the end of file."
+  (indent-region (point-min) (point-max))
+  (save-excursion
+    (goto-char (point-max))
+    (indent-for-tab-command)))
 
 
-(ert-deftest f90-ts-mode-test-activates ()
-  "Check whether f90-ts-mode properly starts."
-  (with-temp-buffer
-    (insert "program activation\nend program activation\n")
-    (f90-ts-mode)
-    (should (derived-mode-p 'f90-ts-mode))))
+(defun f90-ts-mode-tests--resources-dir ()
+  "Get the test resources directory.
+Try the location of 'f90-ts-mode-tests, falling back to the current file."
+  (let* ((test-file (or load-file-name
+                        buffer-file-name))
+         (test-dir (when test-file (file-name-directory test-file))))
+    (if test-dir
+        (expand-file-name "resources" test-dir)
+      (error "Could not determine test directory."))))
 
 
-(ert-deftest f90-ts-mode-test-resources ()
-  "Run all f90 files in folder resources and compare with pre-generated compare files."
-  (let ((f90-files (f90-ts-mode-tests--fortran-files)))
-    (dolist (file f90-files)
-      (let ((label (f90-ts-mode-test-single file nil)))
-        (when label
-          (ert-fail
-           (format "%s differs in %s"
-                   label
-                   (file-name-nondirectory file))))))))
-
-
-(defun f90-ts-mode-test-single (file diff)
-  "Run a single f90 file in folder resources and compare with pre-generated compare files.
-Return nil if test passes, otherwise the test category (indentation, font-lock etc.) which failed."
-  (interactive
-   (list (let* ((rdir (file-name-as-directory (f90-ts-mode-tests--resources-dir)))
-                (files (f90-ts-mode-tests--fortran-files)))
-           (expand-file-name
-            (completing-read "select F90 file: " files nil t)
-            rdir))
-         (read-string "diff command (empty for none): "
-                      f90-ts-mode-tests-diff-command)))
-
-  (let ((compare-file (f90-ts-mode-tests--compare-file file)))
-    (ert-info ((format "testing file: %s" (file-name-nondirectory file)))
-      (should (file-exists-p compare-file))
-      (let ((compare (with-temp-buffer
-                       (insert-file-contents compare-file)
-                       (read (current-buffer))))
-            (current   (f90-ts-mode-tests--run-with-testing
-                        file
-                        (lambda ()
-                          (f90-ts-mode-tests--indent-buffer)
-                          (f90-ts-mode-tests--capture-buffer-state)))))
-        (let ((result (or (f90-ts-mode-tests--compare-and-diff file compare current :indentation diff)
-                          (f90-ts-mode-tests--compare-and-diff file compare current :font-lock diff)
-                          (f90-ts-mode-tests--compare-and-diff file compare current :tree diff))))
-          (when (called-interactively-p 'any)
-            (if result
-                (message "test file %s failed" (file-name-nondirectory file))
-              (message "test file %s succeeded" (file-name-nondirectory file))))
-
-          result)
-        ))))
+(defun f90-ts-mode-tests--fortran-files ()
+  "Get all fortran test files in the resources directory."
+  (directory-files (f90-ts-mode-tests--resources-dir)
+                   t
+                   f90-ts-mode-fortran-file-pattern))
 
 
 ;;------------------------------------------------------------------------------
@@ -212,33 +181,6 @@ If failure, then return the label which failed, otherwise nil."
     (unless cmp label)))
 
 
-
-;;------------------------------------------------------------------------------
-;; Auxiliary stuff
-
-(defun f90-ts-mode-tests--indent-buffer ()
-  "Indent current buffer, including the final line. This is relevant as
-we also want to test the final line, which is relevant during typing
-at the end of file."
-  (indent-region (point-min) (point-max))
-  (save-excursion
-    (goto-char (point-max))
-    (indent-for-tab-command)))
-
-
-(defun f90-ts-mode-tests--resources-dir ()
-  "Get the test resources directory. Use the location of f90-ts-mode-tests."
-  (let* ((test-file (symbol-file 'f90-ts-mode-tests 'defun))
-         (test-dir (file-name-directory test-file)))
-    (expand-file-name "resources" test-dir)))
-
-
-(defun f90-ts-mode-tests--fortran-files ()
-  "Get all fortran test files in the resources directory."
-  (directory-files (f90-ts-mode-tests--resources-dir)
-                   t
-                   f90-ts-mode-fortran-file-pattern))
-
 ;;------------------------------------------------------------------------------
 ;; custom variable handling for testing
 
@@ -316,5 +258,84 @@ selection of indentation rules is tested properly."
        (treesit-parser-create 'fortran)
        (font-lock-ensure)
        (funcall body-fn)))))
+
+
+;;------------------------------------------------------------------------------
+
+(ert-deftest f90-ts-mode-test-activates ()
+  "Check whether f90-ts-mode properly starts."
+  (with-temp-buffer
+    (insert "program activation\nend program activation\n")
+    (f90-ts-mode)
+    (should (derived-mode-p 'f90-ts-mode))))
+
+
+(defun f90-ts-mode-tests-register ()
+  "Dynamically generate ERT tests for all resource files."
+  (cl-loop
+   for file in (f90-ts-mode-tests--fortran-files)
+   for test-name = (intern (format "f90-ts-mode-test/%s"
+                                   (file-name-nondirectory file)))
+   do (eval
+       `(ert-deftest ,test-name ()
+          (let ((label (f90-ts-mode-test-single ,file nil)))
+            (when label
+              (ert-fail (format "%s differs in %s"
+                                label
+                                ,(file-name-nondirectory file)))
+              ))
+          ))
+   ))
+
+;; (ert-deftest f90-ts-mode-test-resources ()
+;;   "Run all f90 files in folder resources and compare with pre-generated compare files."
+;;   (let ((f90-files (f90-ts-mode-tests--fortran-files)))
+;;     (dolist (file f90-files)
+;;       (let ((label (f90-ts-mode-test-single file nil)))
+;;         (when label
+;;           (ert-fail
+;;            (format "%s differs in %s"
+;;                    label
+;;                    (file-name-nondirectory file))))))))
+
+
+(defun f90-ts-mode-test-single (file diff)
+  "Run a single f90 file in folder resources and compare with pre-generated compare files.
+Return nil if test passes, otherwise the test category (indentation, font-lock etc.) which failed."
+  (interactive
+   (list (let* ((rdir (file-name-as-directory (f90-ts-mode-tests--resources-dir)))
+                (files (f90-ts-mode-tests--fortran-files)))
+           (expand-file-name
+            (completing-read "select F90 file: " files nil t)
+            rdir))
+         (read-string "diff command (empty for none): "
+                      f90-ts-mode-tests-diff-command)))
+
+  (let ((compare-file (f90-ts-mode-tests--compare-file file)))
+    (ert-info ((format "testing file: %s" (file-name-nondirectory file)))
+      (should (file-exists-p compare-file))
+      (let ((compare (with-temp-buffer
+                       (insert-file-contents compare-file)
+                       (read (current-buffer))))
+            (current   (f90-ts-mode-tests--run-with-testing
+                        file
+                        (lambda ()
+                          (f90-ts-mode-tests--indent-buffer)
+                          (f90-ts-mode-tests--capture-buffer-state)))))
+        (let ((result (or (f90-ts-mode-tests--compare-and-diff file compare current :indentation diff)
+                          (f90-ts-mode-tests--compare-and-diff file compare current :font-lock diff)
+                          (f90-ts-mode-tests--compare-and-diff file compare current :tree diff))))
+          (when (called-interactively-p 'any)
+            (if result
+                (message "test file %s failed" (file-name-nondirectory file))
+              (message "test file %s succeeded" (file-name-nondirectory file))))
+
+          result)
+        ))))
+
+
+;; dynamically register tests
+(f90-ts-mode-tests-register)
+
 
 (provide 'f90-ts-mode-tests)
