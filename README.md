@@ -54,7 +54,7 @@ Special variables are recognised by regexp matching with customizable variable `
 Special comments are recognised by regexp matching with customizable variable `f90-ts-special-comment-regexp`.
 
 
-*Note*: use interactive elisp function describe-face to find out which face is applied and to customize it if necessary.
+*Note*: use interactive elisp function `describe-face` to find out which face is applied and to customize it if necessary.
 
 
 ### Indentation
@@ -82,7 +82,7 @@ Currently implemented rules are:
 |-----------------------|------------------------------------------------------------------------------------------|
 | openmp                | openmp directives stored as comments starting with `!$` or `!$omp`                       |
 | comments              | regular and special comments                                                             |
-| lists                 | continued lists such as argument lists, association lists, bindings, and expressions     |
+| continued lists       | procedure arguments, variable declarations, association lists, bindings, expressions, etc.   |
 | continued lines       | generic continued lines not matched by list rules, indented by `f90-ts-indent-continued` |
 | internal procedures   | `contains` sections and internal procedures in programs, modules and procedures          |
 | program / module      | program, module, and submodule bodies                                                    |
@@ -97,7 +97,7 @@ Currently implemented rules are:
 
 #### Continued lists
 
-For list structures (argument lists, variable declarations, logical expressions in if and do while etc.) spread
+For list structures (argument lists, variable declarations, logical expressions, do statements etc.) spread
 over several continued lines, four options exists, which can be set for default indentation (in particular indent-region)
 via `f90-ts-indent-lists-region` and single line indentation via `f90-ts-indent-lists-line`.
 Options are `continued-line`, `keep-or-first`, `always-first` and `rotate`.
@@ -105,21 +105,26 @@ Options are `continued-line`, `keep-or-first`, `always-first` and `rotate`.
 
 #### Continued lines
 
-To improve usability of continued lists alignment, the list alignment is only applied, if the first line of the
-statement is aligned. Otherwise, the whole block is moved by the offset applied to the first line of the statement.
+To improve usability of continued lists alignment with rotation and keep options, the indent-line function first
+applies indent-region to region from start of statement to current line. This preserve existing alignment in the region.
+Only if nothing as changed by this operation, the line is indented and if applicable, rotation for alignment positions
+is done.
 
 
 ### Smart end completion
 
 The legacy mode provided smart end completion coupled to indentation, bound to key TAB. This is replicated by f90-ts-mode
-using the treesitter generated AST. Control statements with names are not yet supported.
+using the treesitter generated AST. Lower, upper and title case of construct keywords is recovered and applied to
+end statement, including whether to use `end`, `END` or `End`.
 
 
 ### Break lines
 
-Inspired by the legacy f90 mode as well. Break a line and add continuation symbols. If the current line is a comment,
-then extract the comment starter (like '!>', '!<' or similar), including indentation offset after the starter and
-insert it into the new line to continue the comment.
+Inspired by the legacy f90 mode as well.
+The function `f90-ts-break-line` breaks the current line at point and adds continuation symbols.
+If the current line is a comment,
+then the comment starter (like '!>', '!<' or similar) is extracted, including indentation offset after the
+comment starter, and inserted into the new line to continue the comment.
 The comment starter is found by regexp `f90-ts-comment-prefix-regexp`, which can be customized if necessary.
 
 This can be bound to a key by
