@@ -287,6 +287,45 @@ selection of indentation rules is tested properly."
           ))
    ))
 
+(ert-deftest f90-ts-mode-test-intrinsic-vs-array ()
+  "Test that intrinsics are highlighted as builtins, while arrays/unknowns are not."
+  (with-temp-buffer
+    ;; test f90 code
+    (insert "program test_builtin
+  integer :: i
+  real :: x, y(10)
+  if (allocated(y)) then
+     x = min(1.0, 2.0)
+     y(1) = unknown(x)
+  end if
+end program")
+    (f90-ts-mode)
+    (font-lock-ensure)
+
+    ;; 1. allocated Check (Expect: builtin)
+    (goto-char (point-min))
+    (search-forward "allocated")
+    (goto-char (match-beginning 0)) ;; マッチした単語の先頭へ
+    (should (eq (get-text-property (point) 'face) 'font-lock-builtin-face))
+
+    ;; 2. min Check (Expect: builtin)
+    (goto-char (point-min))
+    (search-forward "min")
+    (goto-char (match-beginning 0))
+    (should (eq (get-text-property (point) 'face) 'font-lock-builtin-face))
+
+    ;; 3. Array 'y' Check (Expect: nil / no function color)
+    (goto-char (point-min))
+    (search-forward "y(1)")
+    (goto-char (match-beginning 0))
+    (should (eq (get-text-property (point) 'face) nil))
+
+    ;; 4. Unknown function Check (Expect: nil)
+    (goto-char (point-min))
+    (search-forward "unknown")
+    (goto-char (match-beginning 0))
+    (should (eq (get-text-property (point) 'face) nil))))
+
 ;; (ert-deftest f90-ts-mode-test-resources ()
 ;;   "Run all f90 files in folder resources and compare with pre-generated compare files."
 ;;   (let ((f90-files (f90-ts-mode-tests--fortran-files)))

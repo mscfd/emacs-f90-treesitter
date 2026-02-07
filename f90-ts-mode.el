@@ -784,6 +784,31 @@ comments in the tree. Must be parsed before plain comments."
      ((comment) @font-lock-comment-face)
      )))
 
+(defun f90-ts--font-lock-rules-intrinsic ()
+  "Font-lock rules for Fortran intrinsic functions."
+  (treesit-font-lock-rules
+   :language 'fortran
+   :feature 'builtin
+   `((call_expression
+      (identifier) @font-lock-builtin-face
+      (:match ,(regexp-opt
+                '("abs" "acos" "aimag" "aint" "allocated" "anint" "any" "asin"
+                  "associated" "atan" "atan2" "btest" "ceiling" "char" "cmplx"
+                  "conjg" "cos" "cosh" "count" "cshift" "date_and_time" "dble"
+                  "dim" "dot_product" "dprod" "eoshift" "epsilon" "exp" "exponent"
+                  "floor" "fraction" "huge" "iand" "ibclr" "ibits" "ibset" "ichar"
+                  "ieor" "index" "int" "ior" "ishft" "ishftc" "kind" "lbound"
+                  "len" "len_trim" "log" "log10" "logical" "matmul" "max"
+                  "maxexponent" "maxloc" "maxval" "merge" "min" "minexponent"
+                  "minloc" "minval" "mod" "modulo" "mvbits" "nearest" "nint" "not"
+                  "null" "pack" "precision" "present" "product" "radix"
+                  "random_number" "random_seed" "range" "real" "repeat" "reshape"
+                  "rrspacing" "scale" "scan" "selected_int_kind"
+                  "selected_real_kind" "set_exponent" "shape" "sign" "sin" "sinh"
+                  "size" "spacing" "spread" "sqrt" "sum" "system_clock" "tan"
+                  "tanh" "tiny" "transfer" "transpose" "trim" "ubound" "unpack"
+                  "verify"))
+               @font-lock-builtin-face)))))
 
 (defun f90-ts--font-lock-rules-keyword ()
   "Font-lock rules for Fortran keywords."
@@ -942,7 +967,6 @@ comments in the tree. Must be parsed before plain comments."
       (identifier)                 @default)
      (subroutine_call
       subroutine: (identifier)     @font-lock-function-name-face)
-     (call_expression (identifier) @font-lock-function-name-face)
 
      ;; within derived type declarations
      (variable_declaration
@@ -1091,6 +1115,7 @@ associates and others."
   (list
    (f90-ts--font-lock-rules-openmp)
    (f90-ts--font-lock-rules-comment)
+   (f90-ts--font-lock-rules-intrinsic)
    (f90-ts--font-lock-rules-keyword)
    (f90-ts--font-lock-rules-preproc)
    (f90-ts--font-lock-rules-prog-mod)
@@ -1464,7 +1489,7 @@ type definition."
       (f90-ts-log :indent "cont var-decl: pos=%d, decl-start=%d" pos decl-start)
       (if (< pos decl-start)
           attr-children
-        decl-children))))    
+        decl-children))))
 
 
 ;;++++++++++++++
@@ -2650,7 +2675,7 @@ and `f90-comment-region-prefix`."
   ;; font-lock feature list controls what features are enabled for highlighting
   (setq-local treesit-font-lock-feature-list
               '((comment preproc)               ; level 1
-                (keyword string type)           ; level 2
+                (builtin keyword string type)   ; level 2
                 (constant number)               ; level 3
                 (function variable operator)    ; level 4
                 (bracket delimiter)))           ; level 5
